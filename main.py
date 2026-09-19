@@ -64,19 +64,26 @@ futbol=[]
 try:
     data=requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}",timeout=15).json()
     for p in data:
+        status = str(p.get('match_status','')).lower()
+        # SOLO partidos que NO han empezado
+        if status not in ['', 'not started', '0', 'ns']:
+            if 'ft' in status or 'ht' in status or 'live' in status or 'finished' in status:
+                continue
+
         liga = str(p.get('league_name','')).lower()
         home = p.get('match_hometeam_name','')
         away = p.get('match_awayteam_name','')
         partido_full = f"{home} vs {away}".lower()
+        
         es_top = any(t in liga for t in LIGAS_TOP)
         es_basura = any(b in liga or b in partido_full for b in PALABRAS_BASURA)
+
         if es_top and not es_basura:
             futbol.append(f"{home} vs {away}")
         if len(futbol)>=4:
             break
 except Exception as e:
     print(f"Error api: {e}")
-
 if len(futbol) < 2:
     futbol = ["Flamengo vs Palmeiras","Boca Juniors vs River Plate","Real Madrid vs Espanyol","Manchester City vs Arsenal"]
 
