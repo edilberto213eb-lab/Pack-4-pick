@@ -40,7 +40,7 @@ def es_liga_valida(liga):
             return False
 
     # 2. Basura general
-    if any(x in l for x in ["u19","Indonesia","Letonia","moldavia","u20","u23","women","youth","reserve","academy","femenil","womens"]):
+    if any(x in l for x in ["u19","sumsel","Indonesia","Letonia","moldavia","u20","u23","women","youth","reserve","academy","femenil","womens"]):
         return False
 
     # 3. WHITELIST - Solo estas 1ra y 2da TOP
