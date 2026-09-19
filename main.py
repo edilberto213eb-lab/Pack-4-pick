@@ -16,7 +16,7 @@ API_KEY = os.getenv("API_SPORTS_KEY")
 
 HISTORY_FILE = "picks_history.json"
 
-# Cuántos días permanecerá bloqueado un partido
+# Días que un partido permanecerá bloqueado (ANTIREPETICIÓN)
 MATCH_COOLDOWN_DAYS = 7
 
 # Cuántos registros conservar
@@ -49,7 +49,7 @@ def tg(m):
 
 
 # ============================================================
-# HISTORIAL
+# HISTORIAL Y ANTIREPETICIÓN
 # ============================================================
 
 def load_history():
@@ -80,7 +80,7 @@ def save_history(history):
 
     try:
 
-        # Limpiar historial antiguo
+        # Limpiar historial antiguo (30 días)
         limite = datetime.now() - timedelta(days=30)
 
         limpio = []
@@ -165,8 +165,7 @@ def usado_recientemente(deporte, liga, home, away, history):
             if x.get("match_key") == mk:
                 return True
 
-            # También bloqueamos mismo enfrentamiento
-            # aunque cambie ligeramente el nombre de la liga
+            # Bloquea también el mismo enfrentamiento aunque cambie la liga
             if x.get("team_key") == ek:
                 return True
 
@@ -207,7 +206,7 @@ def registrar_pick(
 
 
 # ============================================================
-# LIGAS DE FÚTBOL PERMITIDAS (AMPLIADO)
+# LIGAS DE FÚTBOL PERMITIDAS
 # ============================================================
 
 LIGAS_PERMITIDAS = {
@@ -222,15 +221,11 @@ LIGAS_PERMITIDAS = {
     "liga profesional", "argentina primera division",
     "championship", "segunda division", "laliga2",
     "2. bundesliga", "ligue 2", "serie b",
-    # Ligas añadidas para evitar repetir partidos
     "super lig", "süper lig",
     "jupiler pro league", "belgian pro league",
-    "scottish premiership",
-    "swiss super league",
-    "austrian bundesliga",
-    "ekstraklasa",
-    "allsvenskan",
-    "eliteserien",
+    "scottish premiership", "swiss super league",
+    "austrian bundesliga", "ekstraklasa",
+    "allsvenskan", "eliteserien",
     "liga mx, apertura", "liga mx, clausura"
 }
 
@@ -308,6 +303,7 @@ def partido_valido(p, history):
     if not liga_permitida(liga, pais):
         return False
 
+    # ANTIREPETICIÓN ACTIVADA
     if usado_recientemente("futbol", liga, home, away, history):
         return False
 
@@ -356,7 +352,7 @@ def obtener_historial_futbol():
 
 
 # ============================================================
-# ANALIZADOR DE MERCADOS
+# ANALIZADOR DE MERCADOS (UMBRALES ESTRICTOS)
 # ============================================================
 
 def analiza_mercados_futbol(home, away, data_hist):
@@ -389,6 +385,7 @@ def analiza_mercados_futbol(home, away, data_hist):
         ph = get_stats(home)
         pa = get_stats(away)
 
+        # UMBRAL ESTRICTO: Mínimo 5 partidos
         if len(ph) < 5 or len(pa) < 5:
             return None
 
@@ -406,6 +403,7 @@ def analiza_mercados_futbol(home, away, data_hist):
 
         def local_over15(p):
             locales = [g for g in p if g[2]]
+            # UMBRAL ESTRICTO: Mínimo 3 locales
             if len(locales) < 3:
                 return 0
             return sum(1 for g in locales if g[0] >= 2) / len(locales) * 100
@@ -427,6 +425,7 @@ def analiza_mercados_futbol(home, away, data_hist):
 
         mercados = []
 
+        # UMBRALES ESTRICTOS
         if btts_h >= 55 and btts_a >= 55:
             mercados.append({"tipo": "BTTS SI", "score": (btts_h + btts_a) / 2, "key": "btts"})
 
@@ -496,7 +495,7 @@ def get_real_odds(match_id):
 
 
 # ============================================================
-# SELECCIÓN DE FÚTBOL
+# SELECCIÓN DE FÚTBOL (CON ANTIREPETICIÓN)
 # ============================================================
 
 def seleccionar_futbol():
@@ -512,6 +511,7 @@ def seleccionar_futbol():
     candidatos = []
 
     for p in partidos:
+        # partido_valido ya incluye la validación de antirepetición
         if not partido_valido(p, history):
             continue
 
@@ -583,7 +583,7 @@ def seleccionar_futbol():
 
 
 # ============================================================
-# ESPN
+# ESPN (CON ANTIREPETICIÓN)
 # ============================================================
 
 def get_espn_events(sport):
@@ -619,6 +619,7 @@ def seleccionar_espn(sport, mercado, historial):
             away_name = away["team"]["displayName"]
             liga = ev.get("league", {}).get("name", sport)
 
+            # ANTIREPETICIÓN ACTIVADA
             if usado_recientemente(sport, liga, home_name, away_name, historial):
                 continue
 
@@ -633,12 +634,12 @@ def seleccionar_espn(sport, mercado, historial):
     if not candidatos:
         return None
 
-    # Rotación aleatoria real para evitar repetir siempre el mismo
+    # Rotación aleatoria para no repetir siempre el mismo
     return random.choice(candidatos)
 
 
 # ============================================================
-# CONSTRUIR PACK (SIN PLACEHOLDERS, SIN REPETICIONES)
+# CONSTRUIR PACK (DINÁMICO Y SIN PLACEHOLDERS)
 # ============================================================
 
 def construir_pack():
@@ -675,17 +676,14 @@ def construir_pack():
     msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
     numero = 1
 
-    # --- 1) MINI BTTS (Fútbol) ---
+    # --- 1) MINI BTTS (Solo si hay fútbol real) ---
     if seleccionados:
         p1 = seleccionados[0]
         cuota_p1 = f"@{p1['cuota']}" if p1['cuota'] else "@1.85"
         msg += f"{numero}) MINI BTTS {cuota_p1}\n"
         msg += f"- ⚽ {p1['partido']} - {p1['mercado']} {cuota_p1} [Stats OK]\n\n"
         numero += 1
-    else:
-        msg += f"{numero}) MINI BTTS @1.85\n"
-        msg += f"- ⚽ Partido por confirmar - BTTS SI @1.85 [Stats OK]\n\n"
-        numero += 1
+    # Si no hay fútbol, esta sección desaparece y se renumera.
 
     # --- 2) COMBI MIXTA (NFL + NBA) ---
     lineas_combi = []
@@ -705,9 +703,6 @@ def construir_pack():
         msg += f"{numero}) COMBI MIXTA @{round(cuota_combi, 2)}\n"
         msg += "\n".join(lineas_combi) + "\n\n"
         numero += 1
-    else:
-        msg += f"{numero}) COMBI MIXTA\n- Sin picks disponibles hoy\n\n"
-        numero += 1
 
     # --- 3) FIJA (NHL) ---
     if nhl:
@@ -715,18 +710,12 @@ def construir_pack():
         msg += f"{numero}) FIJA\n"
         msg += f"- 🏒 {nhl['partido']} - {nhl['mercado']} @{cuota_nhl}\n\n"
         numero += 1
-    else:
-        msg += f"{numero}) FIJA\n- Sin picks disponibles hoy\n\n"
-        numero += 1
 
     # --- 4) VALUE (MLB) ---
     if mlb:
         cuota_mlb = 1.68
         msg += f"{numero}) VALUE\n"
         msg += f"- ⚾ {mlb['partido']} - {mlb['mercado']} @{cuota_mlb} [Avg 15.5]\n\n"
-        numero += 1
-    else:
-        msg += f"{numero}) VALUE\n- Sin picks disponibles hoy\n\n"
         numero += 1
 
     msg += "💵💰❤️"
@@ -769,7 +758,7 @@ if __name__ == "__main__":
 
     print("======================================")
     print("🤖 BOT PICKS ULTRA")
-    print("🛡️ Anti-repetición: ACTIVO")
+    print("🛡️ Anti-repetición: ACTIVO (7 días)")
     print("🧹 Filtro ligas basura: ACTIVO")
     print("📚 Historial: ACTIVO")
     print("======================================")
@@ -779,7 +768,6 @@ if __name__ == "__main__":
     print(mensaje)
 
     # Solo enviar si el mensaje tiene contenido de picks reales
-    # Si es el aviso de "No se encontraron picks", igual lo enviamos para que sepas.
     tg(mensaje)
 
     print(f"\n✅ Picks enviados: {len(enviados)}")
