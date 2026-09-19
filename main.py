@@ -1,5 +1,5 @@
 import os, requests, random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -29,63 +29,85 @@ def get_espn(p):
     except:
         return []
 
+def es_liga_valida(liga):
+    l = liga.lower()
+    # 1. BLOQUEO ABSOLUTO MEXICO MALA
+    if "mexico" in l:
+        # Solo pasa si es Liga MX o Expansion MX, y NO contiene palabras de 3ra
+        if not ("liga mx" in l or "expansion" in l or "ligamx" in l):
+            return False
+        if any(x in l for x in ["serie b", "premier", "tdp", "segunda division", "tercera", "sub-"]):
+            return False
+
+    # 2. Basura general
+    if any(x in l for x in ["u20","u23","women","youth","reserve","academy","femenil","womens"]):
+        return False
+
+    # 3. WHITELIST - Solo estas 1ra y 2da TOP
+    whitelist = [
+        "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
+        "brasileirao", "liga profesional", "eredivisie", "primeira liga",
+        "champions", "libertadores", "europa league", "mls", "liga pro", "liga mx", "expansion",
+        # 2das buenas de tu foto
+        "championship", "hypermotion", "laliga2", "2. bundesliga", "ligue 2",
+        "eerste divisie", "segunda liga", "liga portugal 2", "challenger pro league",
+        "1. lig", "2. liga", "super league 2", "primera nacional", "challenge league",
+        "brasileiro b", "serie b de brasil", "obos-ligaen", "1. divisjon",
+        "serie b" # italiana
+    ]
+    return any(w in l for w in whitelist)
+
 hoy=datetime.now().strftime('%d/%m')
 hoy_api=datetime.now().strftime('%Y-%m-%d')
 hora=datetime.now().strftime('%H:%M')
 
-# LISTA FINAL - TOP 1RA + 15 SEGUNDAS DE TU FOTO
-LIGAS_TOP = [
-    # 1RA TOP
-    "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
-    "brasileirao", "liga profesional", "liga mx", "eredivisie",
-    "primeira liga", "champions", "libertadores", "europa league", "mls",
-    "liga pro",
-    # 2DA TOP - LAS 15 DE TU FOTO
-    "championship", # 1. EFL Championship
-    "hypermotion", "laliga2", # 2. LaLiga Hypermotion
-    "serie b", # 3. Serie B + 14. Serie B Brasil
-    "2. bundesliga", # 4. b. Bundesliga
-    "ligue 2", # 5. Ligue 2
-    "eerste divisie", # 6. Eerste Divisie
-    "segunda liga", "liga portugal 2", # 7. Liga Portugal 2
-    "challenger pro league", # 8. Challenger Pro League
-    "1. lig", # 9. a. Lig
-    "2. liga", # 10. b. Liga Austria
-    "super league 2", # 11. Super League 2
-    "primera nacional", "nacional b", # 12. Primera Nacional
-    "challenge league", # 13. b. Bundesliga Suiza
-    "brasileiro b", "serie b de brasil", # 14. Serie B Brasil
-    "obos-ligaen", "1. divisjon" # 15. b. Division Noruega
-]
-
-PALABRAS_BASURA = [" u20"," u23"," ii"," reserve"," youth"," women"," academy", "serie b mexico", "premier b", "liga tdp", "tdp", "heroes de zaci", "huracanes izcalli", "celaya 2", "irapuato ii"]
-
 futbol=[]
 try:
     data=requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}",timeout=15).json()
+
     for p in data:
-        status = str(p.get('match_status','')).lower()
-        # SOLO partidos que NO han empezado
-        if status not in ['', 'not started', '0', 'ns']:
-            if 'ft' in status or 'ht' in status or 'live' in status or 'finished' in status:
+        # FILTRO 1: PARTIDOS YA JUGADOS - STATUS
+        status = str(p.get('match_status','')).strip()
+        live = str(p.get('match_live','')).lower()
+        combo = f"{status} {live}".lower()
+
+        # Si está terminado, en vivo, entretiempo, etc -> FUERA
+        if any(x in combo for x in ['ft','finished','after','live','ht','1h','2h','et','pen','aet','award','cancel','postp']):
+            continue
+        # Solo aceptamos vacio, 0, NS, Not Started
+        if status not in ['', '0', 'NS', 'Not Started', '-', 'Not Started '] and len(status) > 0:
+            # Si el status no es uno de los buenos, lo bloqueamos
+            if status.lower() not in ['ns','not started']:
                 continue
 
-        liga = str(p.get('league_name','')).lower()
+        # FILTRO 2: LIGA
+        liga = str(p.get('league_name',''))
+        if not es_liga_valida(liga):
+            continue
+
+        # FILTRO 3: EQUIPOS BASURA POR NOMBRE
         home = p.get('match_hometeam_name','')
         away = p.get('match_awayteam_name','')
-        partido_full = f"{home} vs {away}".lower()
-        
-        es_top = any(t in liga for t in LIGAS_TOP)
-        es_basura = any(b in liga or b in partido_full for b in PALABRAS_BASURA)
+        nombre_completo = f"{home} {away}".lower()
+        equipos_bloqueados = ['santiago','saltillo','guerreros del pacifico','acambaro','zaci','huracanes izcalli','celaya 2','irapuato ii','heroes']
+        if any(e in nombre_completo for e in equipos_bloqueados):
+            continue
 
-        if es_top and not es_basura:
-            futbol.append(f"{home} vs {away}")
+        futbol.append(f"{home} vs {away}")
         if len(futbol)>=4:
             break
+
 except Exception as e:
     print(f"Error api: {e}")
-if len(futbol) < 2:
-    futbol = ["Flamengo vs Palmeiras","Boca Juniors vs River Plate","Real Madrid vs Espanyol","Manchester City vs Arsenal"]
+
+# Fallback si no hay 4 partidos buenos - solo TOP reales
+if len(futbol) < 4:
+    extras = ["Flamengo vs Palmeiras","Boca Juniors vs River Plate","Real Madrid vs Espanyol","Man City vs Arsenal","Bayern vs Dortmund"]
+    for ex in extras:
+        if ex not in futbol:
+            futbol.append(ex)
+        if len(futbol)>=4:
+            break
 
 nfl=get_espn("football/nfl")
 mlb=get_espn("baseball/mlb")
@@ -93,7 +115,6 @@ nhl=get_espn("hockey/nhl")
 
 local_fija=futbol[2].split(" vs ")[0] if len(futbol)>2 else "Real Madrid"
 local_mlb=mlb[0].split(" vs ")[0] if mlb else "CHC"
-
 c1=cuota("btts"); c2=cuota("btts"); c_mlb=cuota("mlb"); c_nfl=cuota("nfl"); c_fija=cuota("fija"); c_nhl=cuota("nhl")
 
 msg=f"🔥 PACK 4 PICKS - {hoy} - CUOTA 3.0\n\n"
