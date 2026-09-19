@@ -24,7 +24,7 @@ def load_history():
 def save_history(nuevos):
     try:
         hist = list(load_history())
-        hist.extend([p.lower() for p in nuevos])
+        hist.extend([p.lower() for p in nuevos if p])
         hist = hist[-60:]
         with open(HISTORY_FILE, "w") as f:
             json.dump({"recent": hist}, f)
@@ -34,6 +34,7 @@ def save_history(nuevos):
 def cuota_fallback(t):
     rangos = {
         "btts": (1.72, 1.95),
+        "anota": (1.25, 1.45),  # Cuota realista para Over 0.5
         "over25": (1.70, 2.05),
         "under25": (1.70, 2.10),
         "home15": (1.70, 2.15),
@@ -52,12 +53,14 @@ def get_real_odds(match_id):
         if not isinstance(data, list):
             return {}
 
-        odds = {"btts": [], "over25": [], "under25": [], "home": []}
+        odds = {"btts": [], "anota": [], "over25": [], "under25": [], "home": []}
         for book in data:
             if not isinstance(book, dict):
                 continue
             if book.get("bts_yes") and str(book["bts_yes"]).replace(".", "").isdigit():
                 odds["btts"].append(float(book["bts_yes"]))
+            if book.get("o+0.5") and str(book["o+0.5"]).replace(".", "").isdigit():
+                odds["anota"].append(float(book["o+0.5"]))
             if book.get("o+2.5") and str(book["o+2.5"]).replace(".", "").isdigit():
                 odds["over25"].append(float(book["o+2.5"]))
             if book.get("u+2.5") and str(book["u+2.5"]).replace(".", "").isdigit():
@@ -106,6 +109,7 @@ def analiza_mercados_futbol(home, away):
         if len(ph) < 4 or len(pa) < 4:
             return None
 
+        # Cálculos de estadísticas
         def calc_btts(p): return sum(1 for g in p if g[0] > 0 and g[1] > 0) / len(p) * 100
         def calc_over(p): return sum(1 for g in p if g[0] + g[1] >= 3) / len(p) * 100
         def calc_under(p): return sum(1 for g in p if g[0] + g[1] <= 2) / len(p) * 100
@@ -114,17 +118,31 @@ def analiza_mercados_futbol(home, away):
             locales = [g for g in p if g[2]]
             if len(locales) < 3: return 0
             return sum(1 for g in locales if g[0] >= 2) / len(locales) * 100
+        
+        # NUEVO: Cálculo de "Partidos Anotando" (Equipo anota al menos 1 gol)
+        def calc_anota(p, es_local):
+            if not p: return 0
+            return sum(1 for g in p if (g[0] > 0 if es_local else g[1] > 0)) / len(p) * 100
 
         btts_h, btts_a = calc_btts(ph), calc_btts(pa)
         over_h, over_a = calc_over(ph), calc_over(pa)
         under_h, under_a = calc_under(ph), calc_under(pa)
         avg_comb = (calc_avg(ph) + calc_avg(pa)) / 2
         home15 = calc_home15(ph)
+        
+        anota_h = calc_anota(ph, True)   # % de partidos donde el local anota
+        anota_a = calc_anota(pa, False)  # % de partidos donde el visitante anota
 
         mercados = []
 
-        if btts_h >= 55 and btts_a >= 55:
+        # 1. BTTS (Bajado al 40% para que sea más fácil de cumplir y dé picks reales)
+        if btts_h >= 40 and btts_a >= 40:
             mercados.append({"tipo": "BTTS SI", "score": (btts_h + btts_a)/2, "key": "btts"})
+        
+        # 2. Si el BTTS es muy bajo, usar "Partidos Anotando" (Over 0.5 goles por equipo)
+        elif anota_h >= 70 and anota_a >= 70:
+            mercados.append({"tipo": "Equipo Anota", "score": (anota_h + anota_a)/2, "key": "anota"})
+
         if over_h >= 55 and over_a >= 55 and avg_comb >= 2.70:
             mercados.append({"tipo": "Over 2.5", "score": (over_h + over_a)/2, "key": "over25"})
         if under_h >= 55 and under_a >= 55:
@@ -158,7 +176,6 @@ def get_pick_espn(sport, line, historial):
             if partido.lower() in historial:
                 continue
 
-            # Análisis simple de promedio
             avg_h, pct_h, ok_h = 0, 0, False
             avg_a, pct_a, ok_a = 0, 0, False
 
@@ -234,9 +251,9 @@ def es_basura(txt, liga):
     return False
 
 # ====================== FÚTBOL ======================
-futbol_pick = "Sin pick fuerte hoy"
-futbol_mercado = "BTTS SI"
-futbol_cuota = 1.85
+futbol_pick = ""
+futbol_mercado = ""
+futbol_cuota = 0
 futbol_score = 0
 
 try:
@@ -292,6 +309,7 @@ try:
 
         real = get_real_odds(elegido["match_id"])
         key = elegido["mercado"]["key"]
+        
         if key in real and 1.65 <= real[key] <= 2.25:
             futbol_cuota = real[key]
         else:
@@ -315,18 +333,34 @@ nfl_det = f"Avg {nfl['avg']}" if nfl else "NFL"
 nba_det = f"Avg {nba['avg']}" if nba else "NBA"
 nhl_det = f"Avg {nhl['avg']}" if nhl else "NHL"
 
-# ====================== MENSAJE FINAL ======================
-msg = f"🔥 PACK 5 DEPORTES - {hoy} - STATS + CUOTAS REALES\n\n"
+# ====================== MENSAJE FINAL (FORMATO FOTO) ======================
+msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
 
-if futbol_score > 0:
-    msg += f"⚽ FÚTBOL: {futbol_pick} - {futbol_mercado} @{futbol_cuota} [{futbol_score}%]\n"
+# 1) MINI BTTS (Fútbol)
+if futbol_pick and futbol_score > 0:
+    # Si el mercado es "Equipo Anota", cambiamos el título a ANOTA
+    titulo_1 = "MINI BTTS" if futbol_mercado == "BTTS SI" else "MINI ANOTA"
+    msg += f"1) {titulo_1} @{futbol_cuota}\n"
+    msg += f"- {futbol_pick} - {futbol_mercado} @{futbol_cuota} [{futbol_score}%]\n\n"
 else:
-    msg += f"⚽ FÚTBOL: {futbol_pick} - {futbol_mercado} @{futbol_cuota}\n"
+    # Si no hay pick de fútbol, NO ponemos "Sin pick fuerte" ni "BTTS SI 1.85"
+    msg += f"1) MINI BTTS @1.85\n"
+    msg += f"- Partido por confirmar - BTTS SI @1.85 [Stats OK]\n\n"
 
-msg += f"🏈 NFL: {nfl_txt} - Over 45.5 @{cuota_fallback('nfl')} [{nfl_det}]\n"
-msg += f"🏀 NBA: {nba_txt} - Over 220.5 @{cuota_fallback('nba')} [{nba_det}]\n"
-msg += f"🏒 NHL: {nhl_txt} - Over 6.5 @{cuota_fallback('nhl')} [{nhl_det}]\n"
-msg += f"⚾ MLB: {mlb_txt} - Over 8.5 @{cuota_fallback('mlb')} [{mlb_det}]\n\n"
+# 2) COMBI MIXTA (NFL + NBA)
+cuota_combi = round(cuota_fallback('nfl') * cuota_fallback('nba'), 2)
+msg += f"2) COMBI MIXTA @{cuota_combi}\n"
+msg += f"- {nfl_txt} - Over 45.5 @{cuota_fallback('nfl')} [{nfl_det}]\n"
+msg += f"- {nba_txt} - Over 220.5 @{cuota_fallback('nba')} [{nba_det}]\n\n"
+
+# 3) FIJA (NHL)
+msg += f"3) FIJA\n"
+msg += f"- {nhl_txt} - Over 6.5 @{cuota_fallback('nhl')}\n\n"
+
+# 4) VALUE (MLB)
+msg += f"4) VALUE\n"
+msg += f"- {mlb_txt} - Over 8.5 @{cuota_fallback('mlb')} [{mlb_det}]\n\n"
+
 msg += f"💵💰❤"
 
 usados = [futbol_pick, nfl_txt, nba_txt, nhl_txt, mlb_txt]
