@@ -49,11 +49,13 @@ def get_real_odds(match_id):
     try:
         url = f"https://apiv3.apifootball.com/?action=get_odds&match_id={match_id}&APIkey={API_KEY}"
         data = requests.get(url, timeout=12).json()
-        if not isinstance(data, list) or not data:
+        if not isinstance(data, list):
             return {}
 
         odds = {"btts": [], "over25": [], "under25": [], "home": []}
         for book in data:
+            if not isinstance(book, dict):
+                continue
             if book.get("bts_yes") and str(book["bts_yes"]).replace(".", "").isdigit():
                 odds["btts"].append(float(book["bts_yes"]))
             if book.get("o+2.5") and str(book["o+2.5"]).replace(".", "").isdigit():
@@ -149,16 +151,22 @@ def get_fallback(sport, historial):
         return []
 
 def analiza_mercados(home, away):
-    """Versión Alto Acierto - filtros estrictos"""
+    """Versión Alto Acierto + protección de errores"""
     try:
         desde = (datetime.now() - timedelta(days=45)).strftime("%Y-%m-%d")
         hasta = datetime.now().strftime("%Y-%m-%d")
         url = f"https://apiv3.apifootball.com/?action=get_events&from={desde}&to={hasta}&APIkey={API_KEY}"
         data = requests.get(url, timeout=15).json()
 
+        # Protección principal
+        if not isinstance(data, list):
+            return None
+
         def get_stats(nombre):
             partidos = []
             for x in data:
+                if not isinstance(x, dict):  # Evita el error
+                    continue
                 h_name = x.get("match_hometeam_name", "").lower()
                 a_name = x.get("match_awayteam_name", "").lower()
                 if nombre.lower() in h_name or nombre.lower() in a_name:
@@ -177,7 +185,6 @@ def analiza_mercados(home, away):
         if len(partidos_h) < 4 or len(partidos_a) < 4:
             return None
 
-        # Cálculos
         def calc_btts(partidos):
             return sum(1 for g in partidos if g[0] > 0 and g[1] > 0) / len(partidos) * 100
 
@@ -208,32 +215,27 @@ def analiza_mercados(home, away):
 
         media_combinada = (avg_h + avg_a) / 2
 
-        # === FILTROS ESTRICTOS (ALTO ACIERTO) ===
         mercados = []
 
-        # BTTS Sí - ambos equipos ≥ 58%
+        # Filtros estrictos (Alto Acierto)
         if btts_h >= 58 and btts_a >= 58:
             score = (btts_h + btts_a) / 2
             mercados.append({"tipo": "BTTS SI", "score": score, "key": "btts"})
 
-        # Over 2.5 - ambos ≥ 58% + media combinada ≥ 2.75
         if over_h >= 58 and over_a >= 58 and media_combinada >= 2.75:
             score = (over_h + over_a) / 2
             mercados.append({"tipo": "Over 2.5", "score": score, "key": "over25"})
 
-        # Under 2.5 - ambos ≥ 58%
         if under_h >= 58 and under_a >= 58:
             score = (under_h + under_a) / 2
             mercados.append({"tipo": "Under 2.5", "score": score, "key": "under25"})
 
-        # Local Over 1.5 - local ≥ 62%
         if home15 >= 62:
             mercados.append({"tipo": "Local Over 1.5", "score": home15, "key": "home15"})
 
         if not mercados:
             return None
 
-        # Elegimos el de mayor score
         mejor = max(mercados, key=lambda x: x["score"])
         return mejor
 
@@ -282,8 +284,14 @@ try:
         timeout=15
     ).json()
 
+    if not isinstance(data, list):
+        data = []
+
     candidatos = []
     for p in data:
+        if not isinstance(p, dict):
+            continue
+
         st = str(p.get("match_status", "")).strip().lower()
         if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed"]):
             continue
@@ -328,7 +336,6 @@ try:
         key = elegido["mercado"]["key"]
         
         cuota = real_odds.get(key)
-        # Solo aceptamos cuotas entre 1.70 y 2.20
         if cuota and 1.70 <= cuota <= 2.20:
             futbol_cuota = cuota
         else:
@@ -338,7 +345,7 @@ except Exception as e:
     print("Error fútbol:", e)
 
 if not futbol_pick:
-    futbol_pick = "Sin pick fuerte hoy"
+    futbol_pick = "Sin pick de alta confianza hoy"
     futbol_mercado = "BTTS SI"
     futbol_cuota = 1.85
     futbol_score = 0
