@@ -41,11 +41,34 @@ hoy = datetime.now().strftime('%d/%m')
 hoy_api = datetime.now().strftime('%Y-%m-%d')
 hora = datetime.now().strftime('%H:%M')
 
+# LIGAS TOP - Todo lo demás se ignora
+LIGAS_TOP = [
+    "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+    "Brasileirão", "Primera Division", "Liga Profesional", "Liga MX",
+    "Eredivisie", "Primeira Liga", "Champions League", "Copa Libertadores",
+    "Europa League", "Premier", "LaLiga", "MLS"
+]
+
 try:
     data = requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}", timeout=15).json()
-    futbol = [f"{p['match_hometeam_name']} vs {p['match_awayteam_name']}" for p in data if p.get('match_hometeam_name')][:4]
+    futbol = []
+    for p in data:
+        liga = p.get('league_name','') + p.get('league','')
+        # Solo si es liga top
+        if any(top.lower() in liga.lower() for top in LIGAS_TOP):
+            futbol.append(f"{p['match_hometeam_name']} vs {p['match_awayteam_name']}")
+        if len(futbol) >= 4:
+            break
 except:
     futbol = []
+
+if not futbol:
+    futbol = [
+        "Flamengo vs Palmeiras",
+        "Boca Juniors vs River Plate", 
+        "Real Madrid vs Espanyol",
+        "Manchester City vs Arsenal"
+    ]
 
 if not futbol:
     futbol = ["Flamengo vs Palmeiras", "Boca Juniors vs River Plate", "Real Madrid vs Espanyol", "Libertad vs Cerro Porteno"]
