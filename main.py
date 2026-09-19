@@ -40,12 +40,12 @@ def es_liga_valida(liga):
             return False
 
     # 2. Basura general
-    if any(x in l for x in ["u20","u23","women","youth","reserve","academy","femenil","womens"]):
+    if any(x in l for x in ["u19","u20","u23","women","youth","reserve","academy","femenil","womens"]):
         return False
 
     # 3. WHITELIST - Solo estas 1ra y 2da TOP
     whitelist = [
-        "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
+        "premier league", "la lga", "serie a", "bundesliga", "ligue 1",
         "brasileirao", "liga profesional", "eredivisie", "primeira liga",
         "champions", "libertadores", "europa league", "mls", "liga pro", "liga mx", "expansion",
         # 2das buenas de tu foto
