@@ -186,6 +186,7 @@ hoy = datetime.now().strftime("%d/%m")
 hoy_api = datetime.now().strftime("%Y-%m-%d")
 ahora = datetime.now()
 
+# === LIGAS PERMITIDAS ===
 LIGAS_PERMITIDAS = [
     "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
     "champions league", "europa league", "brasileirao", "liga mx",
@@ -201,14 +202,24 @@ def es_basura(txt, liga):
     t = txt.lower()
     l = liga.lower()
     
+    # Juveniles, femenino, reservas
     if re.search(r"u\d{1,2}|sub[-\s]?\d|juvenil|youth|reserve|women|femen|feminino", t):
         return True
-    if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira", l):
+    
+    # Ligas muy bajas (incluyendo México malo)
+    if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira|expansion|liga premier|segunda división|tercera|ascenso", l):
         return True
+    
+    # Grupos
     if re.search(r"(grupo|group|girone)\s+[a-z\d]", l):
         return True
     if re.search(r"(grupo|group)\s+[ivx]{1,4}", l):
         return True
+    
+    # Equipos mexicanos de ligas basura (por nombre)
+    if any(x in t for x in ["mineros", "correcaminos", "zapotlanejo", "heroes de zaci", "fresnillo", "tampico", "celaya", "dorados", "cimarrones"]):
+        return True
+        
     return False
 
 historial = load_history()
@@ -226,7 +237,6 @@ try:
     for p in data:
         st = str(p.get("match_status", "")).strip().lower()
         
-        # Filtro más agresivo de partidos terminados / en vivo
         if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed", "awarded", "abandoned"]):
             continue
         if st not in ["", "not started", "ns", "scheduled", "notstarted"] and not st.startswith("not"):
@@ -253,6 +263,10 @@ try:
         if not any(x in pais.lower() for x in PAISES):
             continue
         if not any(x in liga.lower() for x in LIGAS_PERMITIDAS):
+            continue
+
+        # Extra: solo permitir Liga MX de verdad, no Expansion
+        if "mexico" in pais.lower() and "liga mx" not in liga.lower():
             continue
 
         partido = f"{home} vs {away}"
@@ -346,18 +360,23 @@ c_mlb = cuota_fallback("mlb")
 c_nfl = cuota_fallback("nfl")
 c_nhl = cuota_fallback("nhl")
 
-# ---------- MENSAJE (CORREGIDO) ----------
+# ---------- MENSAJE CON EMOJIS ----------
 msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
-msg += f"1) MINI BTTS @{round(c1 * c2, 2)}\n"
+
+msg += f"⚽ 1) MINI BTTS @{round(c1 * c2, 2)}\n"
 msg += f"- {futbol[0]} - BTTS SI @{c1} [{detalles[0]}]\n"
 msg += f"- {futbol[1]} - BTTS SI @{c2} [{detalles[1]}]\n\n"
-msg += f"2) COMBI MIXTA @{round(c_mlb * c_nfl, 2)}\n"
+
+msg += f"⚾🏈 2) COMBI MIXTA @{round(c_mlb * c_nfl, 2)}\n"
 msg += f"- {mlb_txt} - Over 8.5 @{c_mlb} [{mlb_det}]\n"
 msg += f"- {nfl_txt} - Over 45.5 @{c_nfl} [{nfl_det}]\n\n"
-msg += f"3) FIJA\n"
-msg += f"- {futbol[2]} → {homes[2]} GANA @{c_fija}\n\n"   # ← AQUÍ YA DICE QUIÉN GANA
-msg += f"4) VALUE\n"
+
+msg += f"⚽ 3) FIJA\n"
+msg += f"- {futbol[2]} → {homes[2]} GANA @{c_fija}\n\n"
+
+msg += f"🏒 4) VALUE\n"
 msg += f"- {nhl_txt} - Over 6.5 @{c_nhl} [{nhl_det}]\n\n"
+
 msg += f"💵💰❤"
 
 usados = [futbol[0], futbol[1], futbol[2], mlb_txt, nfl_txt, nhl_txt]
