@@ -43,7 +43,6 @@ def cuota_fallback(t):
     return round(random.uniform(a, b), 2)
 
 def get_real_odds(match_id):
-    """Obtiene cuotas reales de API-Football"""
     try:
         url = f"https://apiv3.apifootball.com/?action=get_odds&match_id={match_id}&APIkey={API_KEY}"
         data = requests.get(url, timeout=12).json()
@@ -84,13 +83,13 @@ def analisis_espn(sport, abbr, line):
                         except:
                             pass
         if not totales:
-            return 0, 0, True
+            return 0, 0, False
         avg = sum(totales) / len(totales)
         pct = sum(1 for x in totales if x > line) / len(totales) * 100
         ok = avg >= line * 0.85 and pct >= 40
         return round(avg, 1), round(pct, 0), ok
     except:
-        return 0, 0, True
+        return 0, 0, False
 
 def get_pick_espn(sport, line, historial):
     try:
@@ -98,7 +97,7 @@ def get_pick_espn(sport, line, historial):
         candidatos = []
         for ev in d.get("events", [])[:12]:
             status = ev.get("status", {}).get("type", {})
-            if status.get("completed", False) or status.get("name", "").upper() in ["STATUS_FINAL", "STATUS_FULL_TIME"]:
+            if status.get("completed", False) or status.get("name", "").upper() in ["STATUS_FINAL", "STATUS_FULL_TIME", "STATUS_FINAL_PEN"]:
                 continue
 
             comp = ev["competitions"][0]["competitors"]
@@ -187,14 +186,10 @@ hoy = datetime.now().strftime("%d/%m")
 hoy_api = datetime.now().strftime("%Y-%m-%d")
 ahora = datetime.now()
 
-# === LIGAS PERMITIDAS (Top + Secundarias buenas) ===
 LIGAS_PERMITIDAS = [
-    # Top
     "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
     "champions league", "europa league", "brasileirao", "liga mx",
     "mls", "eredivisie", "primeira liga", "liga profesional",
-    
-    # Secundarias buenas
     "championship", "laliga2", "segunda", "serie b", 
     "2. bundesliga", "ligue 2", "eerste divisie", "segunda liga"
 ]
@@ -206,23 +201,16 @@ def es_basura(txt, liga):
     t = txt.lower()
     l = liga.lower()
     
-    # Juveniles, femenino, reservas
     if re.search(r"u\d{1,2}|sub[-\s]?\d|juvenil|youth|reserve|women|femen|feminino", t):
         return True
-    
-    # Ligas muy bajas
     if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira", l):
         return True
-    
-    # Grupos y fases de grupos
     if re.search(r"(grupo|group|girone)\s+[a-z\d]", l):
         return True
     if re.search(r"(grupo|group)\s+[ivx]{1,4}", l):
         return True
-        
     return False
 
-# ---------- HISTORIAL ----------
 historial = load_history()
 
 # ---------- FÚTBOL ----------
@@ -237,17 +225,18 @@ try:
 
     for p in data:
         st = str(p.get("match_status", "")).strip().lower()
-        estados_ok = ["", "not started", "ns", "scheduled", "notstarted"]
-        if st not in estados_ok and not st.startswith("not"):
-            if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed"]):
-                continue
+        
+        # Filtro más agresivo de partidos terminados / en vivo
+        if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed", "awarded", "abandoned"]):
+            continue
+        if st not in ["", "not started", "ns", "scheduled", "notstarted"] and not st.startswith("not"):
+            continue
 
-        # Hora del partido
         match_time = p.get("match_time", "")
         if match_time and ":" in match_time:
             try:
                 hora_partido = datetime.strptime(f"{hoy_api} {match_time}", "%Y-%m-%d %H:%M")
-                if hora_partido < ahora - timedelta(hours=1.5):
+                if hora_partido < ahora - timedelta(hours=1):
                     continue
             except:
                 pass
@@ -277,6 +266,8 @@ try:
         vistos.add(partido.lower())
         candidatos_fut.append({
             "partido": partido,
+            "home": home,
+            "away": away,
             "det": det,
             "score": score,
             "match_id": match_id
@@ -285,11 +276,11 @@ try:
 except Exception as e:
     print("Error fútbol:", e)
 
-# Ordenamos y elegimos los mejores
 candidatos_fut = sorted(candidatos_fut, key=lambda x: x["score"], reverse=True)
 futbol = []
 detalles = []
 match_ids = []
+homes = []
 
 for c in candidatos_fut:
     if len(futbol) >= 3:
@@ -297,18 +288,24 @@ for c in candidatos_fut:
     futbol.append(c["partido"])
     detalles.append(c["det"])
     match_ids.append(c.get("match_id"))
+    homes.append(c["home"])
 
-# Fallback solo si hace falta
 if len(futbol) < 3:
-    extras = ["Flamengo vs Palmeiras", "Boca Juniors vs River Plate",
-              "Real Madrid vs Barcelona", "Man City vs Liverpool",
-              "Inter vs Milan", "Bayern vs Dortmund"]
+    extras = [
+        ("Flamengo vs Palmeiras", "Flamengo"),
+        ("Boca Juniors vs River Plate", "Boca Juniors"),
+        ("Real Madrid vs Barcelona", "Real Madrid"),
+        ("Man City vs Liverpool", "Man City"),
+        ("Inter vs Milan", "Inter"),
+        ("Bayern vs Dortmund", "Bayern")
+    ]
     random.shuffle(extras)
-    for ex in extras:
+    for ex, home_ex in extras:
         if ex.lower() not in historial and ex.lower() not in [f.lower() for f in futbol]:
             futbol.append(ex)
             detalles.append("Top")
             match_ids.append(None)
+            homes.append(home_ex)
         if len(futbol) >= 3:
             break
 
@@ -316,8 +313,9 @@ while len(futbol) < 3:
     futbol.append(f"Partido {len(futbol)+1}")
     detalles.append("Fallback")
     match_ids.append(None)
+    homes.append("Equipo")
 
-# ---------- CUOTAS REALES PARA FÚTBOL ----------
+# ---------- CUOTAS REALES ----------
 c1_real, _ = get_real_odds(match_ids[0]) if match_ids[0] else (None, None)
 c2_real, _ = get_real_odds(match_ids[1]) if match_ids[1] else (None, None)
 _, c_fija_real = get_real_odds(match_ids[2]) if match_ids[2] else (None, None)
@@ -348,7 +346,7 @@ c_mlb = cuota_fallback("mlb")
 c_nfl = cuota_fallback("nfl")
 c_nhl = cuota_fallback("nhl")
 
-# ---------- MENSAJE ----------
+# ---------- MENSAJE (CORREGIDO) ----------
 msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
 msg += f"1) MINI BTTS @{round(c1 * c2, 2)}\n"
 msg += f"- {futbol[0]} - BTTS SI @{c1} [{detalles[0]}]\n"
@@ -357,7 +355,7 @@ msg += f"2) COMBI MIXTA @{round(c_mlb * c_nfl, 2)}\n"
 msg += f"- {mlb_txt} - Over 8.5 @{c_mlb} [{mlb_det}]\n"
 msg += f"- {nfl_txt} - Over 45.5 @{c_nfl} [{nfl_det}]\n\n"
 msg += f"3) FIJA\n"
-msg += f"- {futbol[2]} - Gana @{c_fija}\n\n"
+msg += f"- {futbol[2]} → {homes[2]} GANA @{c_fija}\n\n"   # ← AQUÍ YA DICE QUIÉN GANA
 msg += f"4) VALUE\n"
 msg += f"- {nhl_txt} - Over 6.5 @{c_nhl} [{nhl_det}]\n\n"
 msg += f"💵💰❤"
