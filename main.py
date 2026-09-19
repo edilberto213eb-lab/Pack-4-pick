@@ -3,47 +3,53 @@ from datetime import datetime
 
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-API_FOOTBALL_KEY = os.getenv("API_SPORTS_KEY")
+API_KEY = os.getenv("API_SPORTS_KEY")
 
 def enviar(msg):
     requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                  json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+                  json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown", "disable_web_page_preview": True})
 
-texto = f"🔥 *PACK 5 DEPORTES - {datetime.now().strftime('%Y-%m-%d')}*\n\n"
+texto = f"🔥 *PACK ELITE 5 DEPORTES - {datetime.now().strftime('%d/%m/%Y')}* 🔥\n"
+texto += "━━━━━━━━━━━━━━━\n\n"
 
-# 1. FUTBOL (con tu clave)
+# 1. FUTBOL - TU API
 try:
     hoy = datetime.now().strftime('%Y-%m-%d')
-    url_fut = f"https://apiv3.apifootball.com/?action=get_events&from={hoy}&to={hoy}&APIkey={API_FOOTBALL_KEY}"
-    r = requests.get(url_fut, timeout=15).json()
+    url = f"https://apiv3.apifootball.com/?action=get_events&from={hoy}&to={hoy}&APIkey={API_KEY}"
+    r = requests.get(url, timeout=15).json()
     if r and len(r) > 0:
-        p = r[0]
-        texto += f"⚽ FÚTBOL: {p['match_hometeam_name']} vs {p['match_awayteam_name']} - BTTS SI @1.85\n"
-    else:
-        texto += f"⚽ FÚTBOL: Flamengo vs Palmeiras - BTTS SI @1.85\n"
-except:
-    texto += f"⚽ FÚTBOL: Flamengo vs Palmeiras - BTTS SI @1.85\n"
+        for p in r[:2]:
+            texto += f"⚽ *FÚTBOL | {p['league_name']}*\n"
+            texto += f"{p['match_hometeam_name']} vs {p['match_awayteam_name']}\n"
+            texto += f"🕒 {p['match_time']}h | 👉 *BTTS SI @1.85*\n"
+            texto += f"_Ambos anotan, ligas con muchos goles_\n\n"
+except Exception as e:
+    print(e)
 
-# 2. OTROS DEPORTES CON ESPN (GRATIS, SIN CLAVE)
-deportes = {
-    "🏈 NFL": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
-    "🏀 NBA": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
-    "🏒 NHL": "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
-    "⚾ MLB": "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+# 2. OTROS DEPORTES - ESPN GRATIS
+espn = {
+    "🏈 NFL": ("football/nfl", "Over 45.5 Puntos @1.90", "Ataques explosivos"),
+    "🏀 NBA": ("basketball/nba", "Over 220.5 Puntos @1.90", "Ritmo alto, defensas sueltas"),
+    "🏒 NHL": ("hockey/nhl", "Over 5.5 Goles @1.85", "Porterías débiles"),
+    "⚾ MLB": ("baseball/mlb", "Over 8.5 Carreras @1.90", "Bullpen cansado")
 }
 
-for nombre, url in deportes.items():
+for nombre, (liga, pick, analisis) in espn.items():
     try:
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{liga}/scoreboard"
         data = requests.get(url, timeout=10).json()
-        juego = data['events'][0] if data['events'] else None
-        if juego:
-            home = juego['competitions'][0]['competitors'][0]['team']['displayName']
-            away = juego['competitions'][0]['competitors'][1]['team']['displayName']
-            texto += f"{nombre}: {away} vs {home} - Over @1.90\n"
-        else:
-            texto += f"{nombre}: No hay juegos hoy - Over @1.90\n"
+        if data['events']:
+            comp = data['events'][0]['competitions'][0]
+            home = comp['competitors'][0]['team']['abbreviation']
+            away = comp['competitors'][1]['team']['abbreviation']
+            texto += f"{nombre} | {away} @ {home}\n"
+            texto += f"👉 *{pick}*\n"
+            texto += f"_{analisis}_\n\n"
     except:
-        texto += f"{nombre}: Juego destacado - Over @1.90\n"
+        continue
+
+texto += "━━━━━━━━━━━━━━━\n"
+texto += "✅ Cuota total ~ @10.50 | Stake 1U"
 
 enviar(texto)
 print(texto)
