@@ -5,112 +5,98 @@ TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 API_KEY = os.getenv("API_SPORTS_KEY")
 
-def cuota(tipo):
-    rangos = {
-        "btts": (1.68, 1.95),
-        "mlb": (1.62, 1.85),
-        "nfl": (1.87, 1.93),
-        "nhl": (1.90, 2.10),
-        "fija": (1.72, 1.86),
-        "over": (1.85, 1.95)
-    }
-    a, b = rangos.get(tipo, (1.80, 1.95))
-    return round(random.uniform(a, b), 2)
+def cuota(t):
+    r = {"btts":(1.68,1.95),"mlb":(1.62,1.85),"nfl":(1.87,1.93),"nhl":(1.9,2.1),"fija":(1.72,1.86),"over":(1.85,1.95)}
+    a,b = r.get(t,(1.8,1.95))
+    return round(random.uniform(a,b),2)
 
-def tg(msg):
+def tg(m):
     try:
-        requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                      json={"chat_id": CHAT_ID, "text": msg}, timeout=15)
+        requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": m}, timeout=15)
     except Exception as e:
-        print(f"Error TG: {e}")
+        print(e)
 
-def get_espn_juegos(path):
+def get_espn(p):
     try:
-        r = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard", timeout=10).json()
-        lista = []
-        for ev in r.get('events', [])[:4]:
-            comp = ev['competitions'][0]['competitors']
-            home = next((c for c in comp if c['homeAway'] == 'home'), comp[0])
-            away = next((c for c in comp if c['homeAway'] == 'away'), comp[1])
-            lista.append(f"{away['team']['abbreviation']} vs {home['team']['abbreviation']}")
-        return lista
+        d=requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{p}/scoreboard",timeout=10).json()
+        l=[]
+        for ev in d.get('events',[])[:4]:
+            c=ev['competitions'][0]['competitors']
+            h=next((x for x in c if x['homeAway']=='home'),c[0])
+            a=next((x for x in c if x['homeAway']=='away'),c[1])
+            l.append(f"{a['team']['abbreviation']} vs {h['team']['abbreviation']}")
+        return l
     except:
         return []
 
-hoy = datetime.now().strftime('%d/%m')
-hoy_api = datetime.now().strftime('%Y-%m-%d')
-hora = datetime.now().strftime('%H:%M')
+hoy=datetime.now().strftime('%d/%m')
+hoy_api=datetime.now().strftime('%Y-%m-%d')
+hora=datetime.now().strftime('%H:%M')
 
-# LIGAS TOP - Todo lo demás se ignora
+# LISTA FINAL - TOP 1RA + 15 SEGUNDAS DE TU FOTO
 LIGAS_TOP = [
-    "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
-    "Brasileirão", "Primera Division", "Liga Profesional", "Liga MX",
-    "Eredivisie", "Primeira Liga", "Champions League", "Copa Libertadores",
-    "Europa League", "Premier", "LaLiga", "MLS"
+    # 1RA TOP
+    "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
+    "brasileirao", "liga profesional", "liga mx", "eredivisie",
+    "primeira liga", "champions", "libertadores", "europa league", "mls",
+    "liga pro",
+    # 2DA TOP - LAS 15 DE TU FOTO
+    "championship", # 1. EFL Championship
+    "hypermotion", "laliga2", # 2. LaLiga Hypermotion
+    "serie b", # 3. Serie B + 14. Serie B Brasil
+    "2. bundesliga", # 4. b. Bundesliga
+    "ligue 2", # 5. Ligue 2
+    "eerste divisie", # 6. Eerste Divisie
+    "segunda liga", "liga portugal 2", # 7. Liga Portugal 2
+    "challenger pro league", # 8. Challenger Pro League
+    "1. lig", # 9. a. Lig
+    "2. liga", # 10. b. Liga Austria
+    "super league 2", # 11. Super League 2
+    "primera nacional", "nacional b", # 12. Primera Nacional
+    "challenge league", # 13. b. Bundesliga Suiza
+    "brasileiro b", "serie b de brasil", # 14. Serie B Brasil
+    "obos-ligaen", "1. divisjon" # 15. b. Division Noruega
 ]
 
+PALABRAS_BASURA = [" u20"," u23"," ii"," reserve"," youth"," women"," academy", "serie b mexico", "premier b", "liga tdp", "tdp", "heroes de zaci", "huracanes izcalli", "celaya 2", "irapuato ii"]
+
+futbol=[]
 try:
-    data = requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}", timeout=15).json()
-    futbol = []
+    data=requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}",timeout=15).json()
     for p in data:
-        liga = p.get('league_name','') + p.get('league','')
-        # Solo si es liga top
-        if any(top.lower() in liga.lower() for top in LIGAS_TOP):
-            futbol.append(f"{p['match_hometeam_name']} vs {p['match_awayteam_name']}")
-        if len(futbol) >= 4:
+        liga = str(p.get('league_name','')).lower()
+        home = p.get('match_hometeam_name','')
+        away = p.get('match_awayteam_name','')
+        partido_full = f"{home} vs {away}".lower()
+        es_top = any(t in liga for t in LIGAS_TOP)
+        es_basura = any(b in liga or b in partido_full for b in PALABRAS_BASURA)
+        if es_top and not es_basura:
+            futbol.append(f"{home} vs {away}")
+        if len(futbol)>=4:
             break
-except:
-    futbol = []
+except Exception as e:
+    print(f"Error api: {e}")
 
-if not futbol:
-    futbol = [
-        "Flamengo vs Palmeiras",
-        "Boca Juniors vs River Plate", 
-        "Real Madrid vs Espanyol",
-        "Manchester City vs Arsenal"
-    ]
+if len(futbol) < 2:
+    futbol = ["Flamengo vs Palmeiras","Boca Juniors vs River Plate","Real Madrid vs Espanyol","Manchester City vs Arsenal"]
 
-if not futbol:
-    futbol = ["Flamengo vs Palmeiras", "Boca Juniors vs River Plate", "Real Madrid vs Espanyol", "Libertad vs Cerro Porteno"]
+nfl=get_espn("football/nfl")
+mlb=get_espn("baseball/mlb")
+nhl=get_espn("hockey/nhl")
 
-nfl = get_espn_juegos("football/nfl")
-mlb = get_espn_juegos("baseball/mlb")
-nhl = get_espn_juegos("hockey/nhl")
+local_fija=futbol[2].split(" vs ")[0] if len(futbol)>2 else "Real Madrid"
+local_mlb=mlb[0].split(" vs ")[0] if mlb else "CHC"
 
-# FIX DEL ERROR: Sacamos el split FUERA del f-string
-local_fija = futbol[2].split(" vs ")[0] if len(futbol) > 2 else "Real Madrid"
-local_mlb = mlb[0].split(" vs ")[0] if mlb else "CHC"
+c1=cuota("btts"); c2=cuota("btts"); c_mlb=cuota("mlb"); c_nfl=cuota("nfl"); c_fija=cuota("fija"); c_nhl=cuota("nhl")
 
-c_btts1 = cuota("btts")
-c_btts2 = cuota("btts")
-c_mlb = cuota("mlb")
-c_nfl = cuota("nfl")
-c_fija = cuota("fija")
-c_nhl = cuota("nhl")
-
-total_btts = round(c_btts1 * c_btts2, 2)
-total_mixta = round(c_mlb * c_nfl, 2)
-
-msg = f"🔥 PACK 4 PICKS - {hoy} - CUOTA 3.0\n\n"
-msg += f"1) MINI BTTS @{total_btts}\n"
-msg += f"- {futbol[0]} - BTTS SI @{c_btts1}\n"
-msg += f"- {futbol[1]} - BTTS SI @{c_btts2}\n\n"
-
-msg += f"2) COMBI MIXTA @{total_mixta}\n"
-if mlb and nfl:
-    msg += f"- {mlb[0]} - Gana {local_mlb} @{c_mlb}\n"
-    msg += f"- {nfl[0]} - Over 45.5 @{c_nfl}\n\n"
-else:
-    msg += f"- {futbol[2]} - Gana {local_fija} @{c_fija}\n"
-    msg += f"- {futbol[3]} - Over 2.5 @{c_nhl}\n\n"
-
-msg += f"3) FIJA 1.80\n"
-msg += f"- {futbol[2]} - Gana {local_fija} @{c_fija} (Score 88)\n\n"
-
+msg=f"🔥 PACK 4 PICKS - {hoy} - CUOTA 3.0\n\n"
+msg+=f"1) MINI BTTS @{round(c1*c2,2)}\n- {futbol[0]} - BTTS SI @{c1}\n- {futbol[1]} - BTTS SI @{c2}\n\n"
+msg+=f"2) COMBI MIXTA @{round(c_mlb*c_nfl,2)}\n- {mlb[0] if mlb else futbol[2]} - Gana {local_mlb if mlb else local_fija} @{c_mlb}\n- {nfl[0] if nfl else futbol[3]} - Over 45.5 @{c_nfl}\n\n"
+msg+=f"3) FIJA 1.80\n- {futbol[2]} - Gana {local_fija} @{c_fija} (Score 88)\n\n"
 pick_val = nhl[0] if nhl else (mlb[0] if mlb else futbol[3])
-msg += f"4) VALUE 2.0+\n"
-msg += f"- {pick_val} - Over 6.5 @{c_nhl} - NHL Pretemporada\n\n"
-msg += f"⏰ Actualizado cada 2 horas | {hora} VE"
+liga_txt = "NHL Pretemporada" if nhl else "MLB" if mlb else "Over TOP"
+msg+=f"4) VALUE 2.0+\n- {pick_val} - Over 6.5 @{c_nhl} - {liga_txt}\n\n"
+msg+=f"⏰ Actualizado cada 2 horas | {hora} VE"
 
 tg(msg)
 print(msg)
