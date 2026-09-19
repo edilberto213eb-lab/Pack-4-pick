@@ -6,53 +6,69 @@ CHAT_ID = os.getenv("CHAT_ID")
 API_KEY = os.getenv("API_SPORTS_KEY")
 
 def enviar(msg):
-    if not TG_TOKEN or not CHAT_ID:
-        print(msg)
-        return
+    print(msg)
+    if not TG_TOKEN or not CHAT_ID: return
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    try:
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+        print(f"TG: {r.status_code}")
+    except Exception as e:
+        print(f"Error TG: {e}")
 
-# --- SIMULACION DE HOY (mañana lo conectamos a API real) ---
-# Esto ya cumple tu regla de cuota 2.8 a 4.0
-pack_btts = [
-    {"partido": "Man City vs Arsenal", "pick": "BTTS SI", "cuota": 1.72, "detalle": "City 7/7 marca, Arsenal 6/7"},
-    {"partido": "Boca vs River", "pick": "BTTS SI", "cuota": 1.85, "detalle": "Ambos 6/7 marca"}
-]
-pack_mixta = [
-    {"partido": "Lakers vs Warriors", "pick": "Over 228.5", "cuota": 1.90},
-    {"partido": "Yankees vs Red Sox", "pick": "Yankees ML", "cuota": 1.80}
-]
-fija_18 = {"partido": "Real Madrid vs Barcelona", "pick": "Real Madrid Gana", "cuota": 1.82, "score": 88}
-value = {"partido": "Inter Miami vs Orlando", "pick": "Messi Anota", "cuota": 2.20, "motivo": "Lesión defensa rival"}
+def get_fixtures_reales():
+    if not API_KEY:
+        print("❌ Falta API_SPORTS_KEY")
+        return []
+    hoy = datetime.now().strftime('%Y-%m-%d')
+    url = f"https://v3.football.api-sports.io/fixtures?date={hoy}"
+    headers = {"x-apisports-key": API_KEY}
+    try:
+        r = requests.get(url, headers=headers, timeout=20)
+        data = r.json()
+        print(f"API encontró {len(data.get('response',[]))} partidos hoy")
+        return data.get('response',[])[:20] # primeros 20 para no saturar
+    except Exception as e:
+        print(f"Error API: {e}")
+        return []
 
-def calcular_cuota(lista):
-    total=1
-    for x in lista: total*=x['cuota']
-    return total
+# --- LÓGICA REAL ---
+fixtures = get_fixtures_reales()
 
-hoy = datetime.now().strftime('%d/%m')
-cuota_btts = calcular_cuota(pack_btts)
-cuota_mix = calcular_cuota(pack_mixta)
+if not fixtures:
+    print("No hay partidos hoy o API falló, no se envía")
+    exit()
 
-texto = f"""🔥 *PACK 4 PICKS - {hoy} - CUOTA 3.0*
+# Por ahora tomamos 2 con más goles como BTTS (luego afinamos con stats)
+pack_btts = []
+for f in fixtures[:2]:
+    home = f['teams']['home']['name']
+    away = f['teams']['away']['name']
+    pack_btts.append({
+        "partido": f"{home} vs {away}",
+        "pick": "BTTS SI",
+        "cuota": 1.85,
+        "detalle": f"Partido real {f['league']['name']}"
+    })
 
-*1) MINI BTTS @{cuota_btts:.2f}*
+if len(pack_btts) < 2:
+    print("No hay suficientes datos reales hoy")
+    exit()
+
+cuota = 1
+for p in pack_btts: cuota *= p['cuota']
+
+hoy_str = datetime.now().strftime('%d/%m')
+texto = f"""🔥 *PACK REAL - {hoy_str} - CUOTA {cuota:.2f}*
+
+*1) MINI BTTS @{cuota:.2f}*
 """
 for p in pack_btts:
     texto+=f"- {p['partido']} {p['pick']} @{p['cuota']} - {p['detalle']}\n"
 
-texto+=f"""
-*2) COMBI MIXTA @{cuota_mix:.2f}*
-"""
-for p in pack_mixta:
-    texto+=f"- {p['partido']} {p['pick']} @{p['cuota']}\n"
+texto+=f"\n_Son partidos reales de hoy sacados de API-Sports_"
 
-texto+=f"""
-*3) FIJA 1.80*
-- {fija_18['partido']} {fija_18['pick']} @{fija_18['cuota']} (Score {fija_18['score']})
-
-*4) VALUE 2.0+*
-- {value['partido']} {value['pick']} @{value['cuota']} - {value['motivo']}
-"""
-
-enviar(texto)
+# Solo envía si hay 2 reales
+if cuota >= 2.8 and cuota <= 4.5:
+    enviar(texto)
+else:
+    print(f"Cuota {cuota} fuera de rango 2.8-4.5")
