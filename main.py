@@ -13,8 +13,7 @@ def cuota(t):
 def tg(m):
     try:
         requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": m}, timeout=15)
-    except Exception as e:
-        print(e)
+    except: pass
 
 def get_espn(p):
     try:
@@ -33,76 +32,78 @@ hoy=datetime.now().strftime('%d/%m')
 hoy_api=datetime.now().strftime('%Y-%m-%d')
 hora=datetime.now().strftime('%H:%M')
 
-# LISTA NEGRA TOTAL - Todo esto se bloquea por liga, pais o equipo
-BLOQUEADOS = [
-    "indonesia","rans","nusantara","psgc","ciamis","sumsel","psps","persiraja","dejan",
-    "letonia","latvia","moldavia","moldova","moldowa",
-    "mexico","tdp","liga premier","serie b mexico","heroes","zaci","santiago","saltillo",
-    "guerreros del pacifico","acambaro","huracanes izcalli","u19","u20","u23","women","youth","reserve","pegadaian"
+# SOLO ESTOS PAISES PASAN - TODO LO DEMAS SE BLOQUEA AUTOMATICO
+PAISES_PERMITIDOS = [
+    "england","spain","italy","germany","france","brazil","argentina",
+    "mexico","netherlands","portugal","usa","ecuador","belgium",
+    "turkey","scotland","switzerland","austria","norway","greece",
+    "chile","colombia","uruguay","paraguay","internacional","europa","world"
 ]
 
-WHITELIST = [
-    "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
-    "brasileirao", "serie a brazil", "liga profesional", "eredivisie", "primeira liga",
-    "champions league", "libertadores", "europa league", "mls", "liga pro ecuador",
-    "liga mx", "liga expansion",
-    "championship", "laliga2", "hypermotion", "2. bundesliga", "ligue 2",
-    "eerste divisie", "segunda liga", "challenger pro league", "1. lig", "super league 2",
-    "primera nacional", "challenge league", "brasileiro b", "serie b", "obos-ligaen"
+# SOLO ESTAS LIGAS PASAN DENTRO DE ESOS PAISES
+LIGAS_PERMITIDAS = [
+    "premier league","la liga","laliga","serie a","bundesliga","ligue 1",
+    "brasileirao","brasileiro serie a","liga profesional","eredivisie","primeira liga",
+    "mls","liga pro","liga mx","expansion mx","ligamx",
+    "champions league","libertadores","europa league","conference league",
+    "championship","laliga2","hypermotion","2. bundesliga","ligue 2",
+    "eerste divisie","segunda liga","challenger pro league","1. lig","primera nacional",
+    "serie b" # italiana y brasileña
 ]
+
+LIGAS_BASURA_EXTRA = ["u19","u20","u21","u23","women","youth","reserve","futsal","friendly","amateur","club friendlies","serie b mexico","liga premier","tdp"]
 
 futbol=[]
+vistos=set()
 try:
     data=requests.get(f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}",timeout=15).json()
     for p in data:
-        # FILTRO 1: PARTIDOS YA JUGADOS
+        # 1. YA JUGADOS FUERA
         status = str(p.get('match_status','')).lower()
         live = str(p.get('match_live','')).lower()
-        if any(x in f"{status} {live}" for x in ['ft','finished','after','live','ht','pen','aet','cancel']):
+        if any(x in f"{status} {live}" for x in ['ft','finished','after','live','ht','1h','2h','et','pen','aet','cancel']):
             continue
-        if status not in ['', '0', 'ns', 'not started', '-'] and 'not started' not in status:
-            continue
+        if status not in ['', '0', 'ns', 'not started', '-', ''] and 'not started' not in status:
+            if len(status)>2: continue
 
         liga = str(p.get('league_name','')).lower()
-        pais = str(p.get('country_name','')).lower() if p.get('country_name') else str(p.get('league_country','')).lower() if p.get('league_country') else ""
-        home = str(p.get('match_hometeam_name','')).lower()
-        away = str(p.get('match_awayteam_name','')).lower()
-        texto_total = f"{liga} {pais} {home} {away}"
+        pais = str(p.get('country_name','') or p.get('league_country','') or p.get('country','') or "").lower()
 
-        # FILTRO 2: BLOQUEO TOTAL
-        if any(b in texto_total for b in BLOQUEADOS):
-            # Excepcion: si es liga mx o expansion, permitimos aunque diga mexico
-            if not ("liga mx" in liga or "expansion" in liga):
-                # Si tiene mexico o indonesia etc, fuera
-                if any(x in texto_total for x in ["indonesia","rans","ciamis","sumsel","psps","letonia","moldavia","tdp","zaci"]):
-                    continue
-            # Segundo chequeo estricto para mexico basura
-            if "mexico" in texto_total and not ("liga mx" in liga or "expansion" in liga):
-                continue
-
-        # FILTRO 3: SOLO WHITELIST
-        if not any(w in liga for w in WHITELIST):
+        # 2. FILTRO PAIS - Si el pais no es de los buenos, FUERA directo
+        if not any(pa in pais for pa in PAISES_PERMITIDOS):
             continue
 
-        futbol.append(f"{p.get('match_hometeam_name','')} vs {p.get('match_awayteam_name','')}")
+        # 3. FILTRO LIGA BASURA EXTRA
+        if any(b in liga for b in LIGAS_BASURA_EXTRA):
+            continue
+        # Mexico trampa
+        if "mexico" in pais or "mexico" in liga:
+            if not ("liga mx" in liga or "expansion" in liga):
+                continue
+
+        # 4. FILTRO WHITELIST LIGA
+        if not any(w in liga for w in LIGAS_PERMITIDAS):
+            continue
+
+        partido = f"{p.get('match_hometeam_name','')} vs {p.get('match_awayteam_name','')}"
+        if partido.lower() in vistos or len(partido)<5:
+            continue
+        vistos.add(partido.lower())
+        futbol.append(partido)
         if len(futbol)>=4:
             break
 except Exception as e:
     print(f"Error api: {e}")
 
-# Fallback limpio solo TOP
 if len(futbol) < 4:
     fallback = ["Flamengo vs Palmeiras","Boca Juniors vs River Plate","Real Madrid vs Espanyol","Man City vs Arsenal","Bayern vs Dortmund","PSG vs Marseille"]
     for ex in fallback:
-        if ex not in futbol:
+        if ex.lower() not in vistos:
             futbol.append(ex)
         if len(futbol)>=4:
             break
 
-nfl=get_espn("football/nfl")
-mlb=get_espn("baseball/mlb")
-nhl=get_espn("hockey/nhl")
-
+nfl=get_espn("football/nfl"); mlb=get_espn("baseball/mlb"); nhl=get_espn("hockey/nhl")
 local_fija=futbol[2].split(" vs ")[0] if len(futbol)>2 else "Real Madrid"
 local_mlb=mlb[0].split(" vs ")[0] if mlb else "CHC"
 c1=cuota("btts"); c2=cuota("btts"); c_mlb=cuota("mlb"); c_nfl=cuota("nfl"); c_fija=cuota("fija"); c_nhl=cuota("nhl")
