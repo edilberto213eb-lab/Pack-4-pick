@@ -25,21 +25,24 @@ def save_history(nuevos):
     try:
         hist = list(load_history())
         hist.extend([p.lower() for p in nuevos])
-        hist = hist[-40:]
+        hist = hist[-50:]
         with open(HISTORY_FILE, "w") as f:
             json.dump({"recent": hist}, f)
     except:
         pass
 
 def cuota_fallback(t):
-    r = {
-        "btts": (1.70, 1.95),
-        "mlb": (1.65, 1.90),
-        "nfl": (1.85, 1.95),
-        "nhl": (1.90, 2.15),
-        "fija": (1.70, 1.95)
+    rangos = {
+        "btts": (1.75, 1.95),
+        "over25": (1.75, 2.05),
+        "under25": (1.75, 2.10),
+        "home15": (1.75, 2.15),
+        "mlb": (1.70, 1.95),
+        "nfl": (1.80, 1.95),
+        "nba": (1.80, 1.95),
+        "nhl": (1.85, 2.10)
     }
-    a, b = r.get(t, (1.80, 1.95))
+    a, b = rangos.get(t, (1.80, 1.95))
     return round(random.uniform(a, b), 2)
 
 def get_real_odds(match_id):
@@ -47,24 +50,26 @@ def get_real_odds(match_id):
         url = f"https://apiv3.apifootball.com/?action=get_odds&match_id={match_id}&APIkey={API_KEY}"
         data = requests.get(url, timeout=12).json()
         if not isinstance(data, list) or not data:
-            return None, None
+            return {}
 
-        btts_list = []
-        home_list = []
-
+        odds = {"btts": [], "over25": [], "under25": [], "home": []}
         for book in data:
-            btts = book.get("bts_yes")
-            home = book.get("odd_1")
-            if btts and str(btts).replace(".", "").isdigit():
-                btts_list.append(float(btts))
-            if home and str(home).replace(".", "").isdigit():
-                home_list.append(float(home))
+            if book.get("bts_yes") and str(book["bts_yes"]).replace(".", "").isdigit():
+                odds["btts"].append(float(book["bts_yes"]))
+            if book.get("o+2.5") and str(book["o+2.5"]).replace(".", "").isdigit():
+                odds["over25"].append(float(book["o+2.5"]))
+            if book.get("u+2.5") and str(book["u+2.5"]).replace(".", "").isdigit():
+                odds["under25"].append(float(book["u+2.5"]))
+            if book.get("odd_1") and str(book["odd_1"]).replace(".", "").isdigit():
+                odds["home"].append(float(book["odd_1"]))
 
-        btts_avg = round(sum(btts_list) / len(btts_list), 2) if btts_list else None
-        home_avg = round(sum(home_list) / len(home_list), 2) if home_list else None
-        return btts_avg, home_avg
+        result = {}
+        for k, v in odds.items():
+            if v:
+                result[k] = round(sum(v) / len(v), 2)
+        return result
     except:
-        return None, None
+        return {}
 
 def analisis_espn(sport, abbr, line):
     try:
@@ -95,36 +100,32 @@ def get_pick_espn(sport, line, historial):
     try:
         d = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/scoreboard", timeout=10).json()
         candidatos = []
-        for ev in d.get("events", [])[:12]:
+        for ev in d.get("events", [])[:15]:
             status = ev.get("status", {}).get("type", {})
-            if status.get("completed", False) or status.get("name", "").upper() in ["STATUS_FINAL", "STATUS_FULL_TIME", "STATUS_FINAL_PEN"]:
+            if status.get("completed", False) or "FINAL" in status.get("name", "").upper():
                 continue
 
             comp = ev["competitions"][0]["competitors"]
             h = next((x for x in comp if x["homeAway"] == "home"), comp[0])
             a = next((x for x in comp if x["homeAway"] == "away"), comp[1])
-            ah = h["team"]["abbreviation"]
-            aa = a["team"]["abbreviation"]
-            partido = f"{aa} vs {ah}"
+            
+            nombre_h = h["team"]["displayName"]
+            nombre_a = a["team"]["displayName"]
+            partido = f"{nombre_a} vs {nombre_h}"
 
             if partido.lower() in historial:
                 continue
 
-            avg_h, pct_h, ok_h = analisis_espn(sport, ah, line)
-            avg_a, pct_a, ok_a = analisis_espn(sport, aa, line)
+            avg_h, pct_h, ok_h = analisis_espn(sport, h["team"]["abbreviation"], line)
+            avg_a, pct_a, ok_a = analisis_espn(sport, a["team"]["abbreviation"], line)
             avg = (avg_h + avg_a) / 2 if avg_h and avg_a else max(avg_h, avg_a)
 
             if ok_h or ok_a:
-                candidatos.append({
-                    "partido": partido,
-                    "avg": avg,
-                    "pct": max(pct_h, pct_a)
-                })
+                candidatos.append({"partido": partido, "avg": avg, "pct": max(pct_h, pct_a)})
 
         if not candidatos:
             return None
-
-        candidatos = sorted(candidatos, key=lambda x: x["avg"], reverse=True)[:4]
+        candidatos = sorted(candidatos, key=lambda x: x["avg"], reverse=True)[:3]
         return random.choice(candidatos)
     except:
         return None
@@ -135,64 +136,120 @@ def get_fallback(sport, historial):
         out = []
         for ev in d.get("events", [])[:10]:
             status = ev.get("status", {}).get("type", {})
-            if status.get("completed", False) or status.get("name", "").upper() in ["STATUS_FINAL", "STATUS_FULL_TIME"]:
+            if status.get("completed", False) or "FINAL" in status.get("name", "").upper():
                 continue
             c = ev["competitions"][0]["competitors"]
             h = next((x for x in c if x["homeAway"] == "home"), c[0])
             a = next((x for x in c if x["homeAway"] == "away"), c[1])
-            p = f"{a['team']['abbreviation']} vs {h['team']['abbreviation']}"
+            p = f"{a['team']['displayName']} vs {h['team']['displayName']}"
             if p.lower() not in historial:
                 out.append(p)
         return out
     except:
         return []
 
-def analiza_btts(home, away):
+def analiza_mercados(home, away):
+    """Versión Alto Acierto - filtros estrictos"""
     try:
-        desde = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        desde = (datetime.now() - timedelta(days=45)).strftime("%Y-%m-%d")
         hasta = datetime.now().strftime("%Y-%m-%d")
         url = f"https://apiv3.apifootball.com/?action=get_events&from={desde}&to={hasta}&APIkey={API_KEY}"
         data = requests.get(url, timeout=15).json()
 
-        def stats(nombre):
-            pars = [x for x in data if nombre.lower() in (x.get("match_hometeam_name", "") + x.get("match_awayteam_name", "")).lower()][:7]
-            if len(pars) < 3:
-                return 65, 65
-            btts = over = 0
-            for p in pars:
-                try:
-                    gh = int(p.get("match_hometeam_score", 0) or 0)
-                    ga = int(p.get("match_awayteam_score", 0) or 0)
-                    if gh > 0 and ga > 0:
-                        btts += 1
-                    if gh + ga >= 3:
-                        over += 1
-                except:
-                    continue
-            pb = btts / len(pars) * 100 if pars else 0
-            po = over / len(pars) * 100 if pars else 0
-            return pb, po
+        def get_stats(nombre):
+            partidos = []
+            for x in data:
+                h_name = x.get("match_hometeam_name", "").lower()
+                a_name = x.get("match_awayteam_name", "").lower()
+                if nombre.lower() in h_name or nombre.lower() in a_name:
+                    try:
+                        gh = int(x.get("match_hometeam_score", 0) or 0)
+                        ga = int(x.get("match_awayteam_score", 0) or 0)
+                        es_local = nombre.lower() in h_name
+                        partidos.append((gh, ga, es_local))
+                    except:
+                        continue
+            return partidos[:8]
 
-        bh, oh = stats(home)
-        ba, oa = stats(away)
-        valido = bh >= 48 and ba >= 48
-        score = (bh + ba) / 2
-        txt = f"BTTS {bh:.0f}%/{ba:.0f}%"
-        return valido, txt, score
-    except:
-        return True, "Stats OK", 60
+        partidos_h = get_stats(home)
+        partidos_a = get_stats(away)
 
-hoy = datetime.now().strftime("%d/%m")
-hoy_api = datetime.now().strftime("%Y-%m-%d")
-ahora = datetime.now()
+        if len(partidos_h) < 4 or len(partidos_a) < 4:
+            return None
 
-# === LIGAS PERMITIDAS ===
+        # Cálculos
+        def calc_btts(partidos):
+            return sum(1 for g in partidos if g[0] > 0 and g[1] > 0) / len(partidos) * 100
+
+        def calc_over25(partidos):
+            return sum(1 for g in partidos if g[0] + g[1] >= 3) / len(partidos) * 100
+
+        def calc_under25(partidos):
+            return sum(1 for g in partidos if g[0] + g[1] <= 2) / len(partidos) * 100
+
+        def calc_avg_goals(partidos):
+            return sum(g[0] + g[1] for g in partidos) / len(partidos)
+
+        def calc_home_over15(partidos):
+            locales = [g for g in partidos if g[2]]
+            if len(locales) < 3:
+                return 0
+            return sum(1 for g in locales if g[0] >= 2) / len(locales) * 100
+
+        btts_h = calc_btts(partidos_h)
+        btts_a = calc_btts(partidos_a)
+        over_h = calc_over25(partidos_h)
+        over_a = calc_over25(partidos_a)
+        under_h = calc_under25(partidos_h)
+        under_a = calc_under25(partidos_a)
+        avg_h = calc_avg_goals(partidos_h)
+        avg_a = calc_avg_goals(partidos_a)
+        home15 = calc_home_over15(partidos_h)
+
+        media_combinada = (avg_h + avg_a) / 2
+
+        # === FILTROS ESTRICTOS (ALTO ACIERTO) ===
+        mercados = []
+
+        # BTTS Sí - ambos equipos ≥ 58%
+        if btts_h >= 58 and btts_a >= 58:
+            score = (btts_h + btts_a) / 2
+            mercados.append({"tipo": "BTTS SI", "score": score, "key": "btts"})
+
+        # Over 2.5 - ambos ≥ 58% + media combinada ≥ 2.75
+        if over_h >= 58 and over_a >= 58 and media_combinada >= 2.75:
+            score = (over_h + over_a) / 2
+            mercados.append({"tipo": "Over 2.5", "score": score, "key": "over25"})
+
+        # Under 2.5 - ambos ≥ 58%
+        if under_h >= 58 and under_a >= 58:
+            score = (under_h + under_a) / 2
+            mercados.append({"tipo": "Under 2.5", "score": score, "key": "under25"})
+
+        # Local Over 1.5 - local ≥ 62%
+        if home15 >= 62:
+            mercados.append({"tipo": "Local Over 1.5", "score": home15, "key": "home15"})
+
+        if not mercados:
+            return None
+
+        # Elegimos el de mayor score
+        mejor = max(mercados, key=lambda x: x["score"])
+        return mejor
+
+    except Exception as e:
+        print("Error analiza_mercados:", e)
+        return None
+
+hoy = datetime.now().strftime("%Y-%m-%d")
+hoy_api = hoy
+
 LIGAS_PERMITIDAS = [
     "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
     "champions league", "europa league", "brasileirao", "liga mx",
     "mls", "eredivisie", "primeira liga", "liga profesional",
     "championship", "laliga2", "segunda", "serie b", 
-    "2. bundesliga", "ligue 2", "eerste divisie", "segunda liga"
+    "2. bundesliga", "ligue 2"
 ]
 
 PAISES = ["england", "spain", "italy", "germany", "france", "brazil", "argentina",
@@ -201,32 +258,23 @@ PAISES = ["england", "spain", "italy", "germany", "france", "brazil", "argentina
 def es_basura(txt, liga):
     t = txt.lower()
     l = liga.lower()
-    
-    # Juveniles, femenino, reservas
     if re.search(r"u\d{1,2}|sub[-\s]?\d|juvenil|youth|reserve|women|femen|feminino", t):
         return True
-    
-    # Ligas muy bajas (incluyendo México malo)
-    if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira|expansion|liga premier|segunda división|tercera|ascenso", l):
+    if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira|expansion|liga premier|ascenso", l):
         return True
-    
-    # Grupos
     if re.search(r"(grupo|group|girone)\s+[a-z\d]", l):
         return True
-    if re.search(r"(grupo|group)\s+[ivx]{1,4}", l):
+    if any(x in t for x in ["mineros", "correcaminos", "zapotlanejo", "heroes de zaci", "fresnillo"]):
         return True
-    
-    # Equipos mexicanos de ligas basura (por nombre)
-    if any(x in t for x in ["mineros", "correcaminos", "zapotlanejo", "heroes de zaci", "fresnillo", "tampico", "celaya", "dorados", "cimarrones"]):
-        return True
-        
     return False
 
 historial = load_history()
 
-# ---------- FÚTBOL ----------
-candidatos_fut = []
-vistos = set()
+# ====================== FÚTBOL ======================
+futbol_pick = None
+futbol_mercado = None
+futbol_cuota = None
+futbol_score = 0
 
 try:
     data = requests.get(
@@ -234,22 +282,11 @@ try:
         timeout=15
     ).json()
 
+    candidatos = []
     for p in data:
         st = str(p.get("match_status", "")).strip().lower()
-        
-        if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed", "awarded", "abandoned"]):
+        if any(x in st for x in ["ft", "finished", "after", "live", "ht", "1h", "2h", "cancel", "postponed"]):
             continue
-        if st not in ["", "not started", "ns", "scheduled", "notstarted"] and not st.startswith("not"):
-            continue
-
-        match_time = p.get("match_time", "")
-        if match_time and ":" in match_time:
-            try:
-                hora_partido = datetime.strptime(f"{hoy_api} {match_time}", "%Y-%m-%d %H:%M")
-                if hora_partido < ahora - timedelta(hours=1):
-                    continue
-            except:
-                pass
 
         liga = str(p.get("league_name", ""))
         pais = str(p.get("country_name", "") or "")
@@ -264,122 +301,78 @@ try:
             continue
         if not any(x in liga.lower() for x in LIGAS_PERMITIDAS):
             continue
-
-        # Extra: solo permitir Liga MX de verdad, no Expansion
         if "mexico" in pais.lower() and "liga mx" not in liga.lower():
             continue
 
         partido = f"{home} vs {away}"
-        if partido.lower() in vistos or partido.lower() in historial:
+        if partido.lower() in historial:
             continue
 
-        ok, det, score = analiza_btts(home, away)
-        if not ok:
-            continue
+        mejor = analiza_mercados(home, away)
+        if mejor:
+            candidatos.append({
+                "partido": partido,
+                "mercado": mejor,
+                "match_id": match_id,
+                "score": mejor["score"]
+            })
 
-        vistos.add(partido.lower())
-        candidatos_fut.append({
-            "partido": partido,
-            "home": home,
-            "away": away,
-            "det": det,
-            "score": score,
-            "match_id": match_id
-        })
+    if candidatos:
+        candidatos = sorted(candidatos, key=lambda x: x["score"], reverse=True)
+        elegido = candidatos[0]
+        futbol_pick = elegido["partido"]
+        futbol_mercado = elegido["mercado"]["tipo"]
+        futbol_score = round(elegido["score"])
+        
+        real_odds = get_real_odds(elegido["match_id"])
+        key = elegido["mercado"]["key"]
+        
+        cuota = real_odds.get(key)
+        # Solo aceptamos cuotas entre 1.70 y 2.20
+        if cuota and 1.70 <= cuota <= 2.20:
+            futbol_cuota = cuota
+        else:
+            futbol_cuota = cuota_fallback(key)
 
 except Exception as e:
     print("Error fútbol:", e)
 
-candidatos_fut = sorted(candidatos_fut, key=lambda x: x["score"], reverse=True)
-futbol = []
-detalles = []
-match_ids = []
-homes = []
+if not futbol_pick:
+    futbol_pick = "Sin pick fuerte hoy"
+    futbol_mercado = "BTTS SI"
+    futbol_cuota = 1.85
+    futbol_score = 0
 
-for c in candidatos_fut:
-    if len(futbol) >= 3:
-        break
-    futbol.append(c["partido"])
-    detalles.append(c["det"])
-    match_ids.append(c.get("match_id"))
-    homes.append(c["home"])
-
-if len(futbol) < 3:
-    extras = [
-        ("Flamengo vs Palmeiras", "Flamengo"),
-        ("Boca Juniors vs River Plate", "Boca Juniors"),
-        ("Real Madrid vs Barcelona", "Real Madrid"),
-        ("Man City vs Liverpool", "Man City"),
-        ("Inter vs Milan", "Inter"),
-        ("Bayern vs Dortmund", "Bayern")
-    ]
-    random.shuffle(extras)
-    for ex, home_ex in extras:
-        if ex.lower() not in historial and ex.lower() not in [f.lower() for f in futbol]:
-            futbol.append(ex)
-            detalles.append("Top")
-            match_ids.append(None)
-            homes.append(home_ex)
-        if len(futbol) >= 3:
-            break
-
-while len(futbol) < 3:
-    futbol.append(f"Partido {len(futbol)+1}")
-    detalles.append("Fallback")
-    match_ids.append(None)
-    homes.append("Equipo")
-
-# ---------- CUOTAS REALES ----------
-c1_real, _ = get_real_odds(match_ids[0]) if match_ids[0] else (None, None)
-c2_real, _ = get_real_odds(match_ids[1]) if match_ids[1] else (None, None)
-_, c_fija_real = get_real_odds(match_ids[2]) if match_ids[2] else (None, None)
-
-c1 = c1_real if c1_real and 1.40 < c1_real < 2.40 else cuota_fallback("btts")
-c2 = c2_real if c2_real and 1.40 < c2_real < 2.40 else cuota_fallback("btts")
-c_fija = c_fija_real if c_fija_real and 1.40 < c_fija_real < 2.50 else cuota_fallback("fija")
-
-# ---------- MLB / NFL / NHL ----------
+# ====================== OTROS DEPORTES ======================
 mlb_pick = get_pick_espn("baseball/mlb", 8.5, historial)
 nfl_pick = get_pick_espn("football/nfl", 45.5, historial)
+nba_pick = get_pick_espn("basketball/nba", 220.5, historial)
 nhl_pick = get_pick_espn("hockey/nhl", 6.5, historial)
 
 mlb_f = get_fallback("baseball/mlb", historial)
 nfl_f = get_fallback("football/nfl", historial)
+nba_f = get_fallback("basketball/nba", historial)
 nhl_f = get_fallback("hockey/nhl", historial)
 
-mlb_txt = mlb_pick["partido"] if mlb_pick else (mlb_f[0] if mlb_f else futbol[0])
-mlb_det = f"Avg {mlb_pick['avg']} Over {mlb_pick['pct']:.0f}%" if mlb_pick else "MLB"
+mlb_txt = mlb_pick["partido"] if mlb_pick else (mlb_f[0] if mlb_f else "Yankees vs Red Sox")
+nfl_txt = nfl_pick["partido"] if nfl_pick else (nfl_f[0] if nfl_f else "Chiefs vs Bills")
+nba_txt = nba_pick["partido"] if nba_pick else (nba_f[0] if nba_f else "Lakers vs Celtics")
+nhl_txt = nhl_pick["partido"] if nhl_pick else (nhl_f[0] if nhl_f else "Maple Leafs vs Canadiens")
 
-nfl_txt = nfl_pick["partido"] if nfl_pick else (nfl_f[0] if nfl_f else futbol[1])
-nfl_det = f"Avg {nfl_pick['avg']} Over {nfl_pick['pct']:.0f}%" if nfl_pick else "NFL"
+# ====================== MENSAJE FINAL ======================
+msg = f"🔥 PACK 5 DEPORTES - {hoy}\n\n"
 
-nhl_txt = nhl_pick["partido"] if nhl_pick else (nhl_f[0] if nhl_f else futbol[2])
-nhl_det = f"Avg {nhl_pick['avg']} Over {nhl_pick['pct']:.0f}%" if nhl_pick else "NHL"
+if futbol_score > 0:
+    msg += f"⚽ FÚTBOL: {futbol_pick} - {futbol_mercado} @{futbol_cuota} [{futbol_score}%]\n"
+else:
+    msg += f"⚽ FÚTBOL: Sin pick de alta confianza hoy\n"
 
-c_mlb = cuota_fallback("mlb")
-c_nfl = cuota_fallback("nfl")
-c_nhl = cuota_fallback("nhl")
+msg += f"🏈 NFL: {nfl_txt} - Over 45.5 @{cuota_fallback('nfl')}\n"
+msg += f"🏀 NBA: {nba_txt} - Over 220.5 @{cuota_fallback('nba')}\n"
+msg += f"🏒 NHL: {nhl_txt} - Over 6.5 @{cuota_fallback('nhl')}\n"
+msg += f"⚾ MLB: {mlb_txt} - Over 8.5 @{cuota_fallback('mlb')}"
 
-# ---------- MENSAJE CON EMOJIS ----------
-msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
-
-msg += f"⚽ 1) MINI BTTS @{round(c1 * c2, 2)}\n"
-msg += f"- {futbol[0]} - BTTS SI @{c1} [{detalles[0]}]\n"
-msg += f"- {futbol[1]} - BTTS SI @{c2} [{detalles[1]}]\n\n"
-
-msg += f"⚾🏈 2) COMBI MIXTA @{round(c_mlb * c_nfl, 2)}\n"
-msg += f"- {mlb_txt} - Over 8.5 @{c_mlb} [{mlb_det}]\n"
-msg += f"- {nfl_txt} - Over 45.5 @{c_nfl} [{nfl_det}]\n\n"
-
-msg += f"⚽ 3) FIJA\n"
-msg += f"- {futbol[2]} → {homes[2]} GANA @{c_fija}\n\n"
-
-msg += f"🏒 4) VALUE\n"
-msg += f"- {nhl_txt} - Over 6.5 @{c_nhl} [{nhl_det}]\n\n"
-
-msg += f"💵💰❤"
-
-usados = [futbol[0], futbol[1], futbol[2], mlb_txt, nfl_txt, nhl_txt]
+usados = [futbol_pick, nfl_txt, nba_txt, nhl_txt, mlb_txt]
 save_history(usados)
 
 tg(msg)
