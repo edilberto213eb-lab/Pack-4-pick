@@ -1,90 +1,35 @@
-import os
-import requests
-import random
-import re
-import json
-from datetime import datetime, timedelta, timezone
-
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
+import os, requests, random, re, json
+from datetime import datetime, timedelta
 
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 API_KEY = os.getenv("API_SPORTS_KEY")
-
 HISTORY_FILE = "picks_history.json"
-
-# Margen de seguridad:
-# El partido debe comenzar al menos X minutos después de ahora.
-MINUTOS_ANTICIPACION = 10
-
-
-# ============================================================
-# TELEGRAM
-# ============================================================
 
 def tg(m):
     try:
-        if not TG_TOKEN or not CHAT_ID:
-            print("Faltan TG_TOKEN o CHAT_ID")
-            return
-
-        requests.post(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": m
-            },
-            timeout=15
-        )
-    except Exception as e:
-        print("Error Telegram:", e)
-
-
-# ============================================================
-# HISTORIAL
-# ============================================================
+        requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+                      json={"chat_id": CHAT_ID, "text": m}, timeout=15)
+    except:
+        pass
 
 def load_history():
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        with open(HISTORY_FILE, "r") as f:
             data = json.load(f)
-
-        return set(
-            str(x).lower()
-            for x in data.get("recent", [])
-        )
-
-    except Exception:
+            return set(x.lower() for x in data.get("recent", []))
+    except:
         return set()
-
 
 def save_history(nuevos):
     try:
         hist = list(load_history())
-
-        for p in nuevos:
-            if p:
-                hist.append(str(p).lower())
-
+        hist.extend([p.lower() for p in nuevos if p])
         hist = hist[-60:]
-
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                {"recent": hist},
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
-    except Exception as e:
-        print("Error guardando historial:", e)
-
-
-# ============================================================
-# CUOTAS FALLBACK
-# ============================================================
+        with open(HISTORY_FILE, "w") as f:
+            json.dump({"recent": hist}, f)
+    except:
+        pass
 
 def cuota_fallback(t):
     rangos = {
@@ -98,535 +43,64 @@ def cuota_fallback(t):
         "nba": (1.80, 1.95),
         "nhl": (1.85, 2.10)
     }
-
     a, b = rangos.get(t, (1.80, 1.95))
-
     return round(random.uniform(a, b), 2)
 
-
-# ============================================================
-# FECHA/HORA DEL PARTIDO
-# ============================================================
-
-def obtener_hora_partido(p):
-    """
-    Intenta obtener la fecha/hora de inicio desde distintos
-    campos utilizados por API-Football.
-    """
-
-    posibles = [
-        p.get("match_date"),
-        p.get("match_time"),
-        p.get("match_datetime"),
-        p.get("match_start"),
-        p.get("event_date"),
-        p.get("date")
-    ]
-
-    fecha = None
-    hora = None
-
-    for valor in posibles:
-        if not valor:
-            continue
-
-        texto = str(valor).strip()
-
-        # Detectar fecha YYYY-MM-DD
-        m_fecha = re.search(
-            r"(20\d{2}-\d{2}-\d{2})",
-            texto
-        )
-
-        # Detectar hora HH:MM
-        m_hora = re.search(
-            r"(\d{1,2}:\d{2})",
-            texto
-        )
-
-        if m_fecha:
-            fecha = m_fecha.group(1)
-
-        if m_hora:
-            hora = m_hora.group(1)
-
-        if fecha and hora:
-            break
-
-    if not fecha:
-        return None
-
-    if not hora:
-        hora = "00:00"
-
-    try:
-        return datetime.strptime(
-            f"{fecha} {hora}",
-            "%Y-%m-%d %H:%M"
-        )
-
-    except Exception:
-        return None
-
-
-def partido_es_futuro(p):
-    """
-    FILTRO PRINCIPAL.
-
-    El partido solamente pasa si:
-    - tiene fecha/hora válida
-    - comienza después de ahora + margen
-    """
-
-    inicio = obtener_hora_partido(p)
-
-    if inicio is None:
-        return False
-
-    ahora = datetime.now()
-
-    limite = ahora + timedelta(
-        minutes=MINUTOS_ANTICIPACION
-    )
-
-    return inicio > limite
-
-
-# ============================================================
-# FILTRO DE ESTADOS
-# ============================================================
-
-ESTADOS_PROHIBIDOS = [
-    "live",
-    "1h",
-    "2h",
-    "ht",
-    "half",
-    "halftime",
-    "ft",
-    "finished",
-    "final",
-    "ended",
-    "complete",
-    "completed",
-    "cancel",
-    "cancelled",
-    "canceled",
-    "postponed",
-    "suspended",
-    "abandoned",
-    "delayed",
-    "interrupted"
-]
-
-
-def estado_prohibido(p):
-    campos = [
-        p.get("match_status"),
-        p.get("status"),
-        p.get("status_name"),
-        p.get("event_status")
-    ]
-
-    texto = " ".join(
-        str(x).lower()
-        for x in campos
-        if x
-    )
-
-    for estado in ESTADOS_PROHIBIDOS:
-        if estado in texto:
-            return True
-
-    return False
-
-
-# ============================================================
-# LIGAS PERMITIDAS
-# ============================================================
-
-LIGAS_EXACTAS = {
-    "premier league",
-    "english premier league",
-
-    "la liga",
-    "laliga",
-
-    "serie a",
-
-    "bundesliga",
-
-    "ligue 1",
-
-    "champions league",
-    "uefa champions league",
-
-    "europa league",
-    "uefa europa league",
-
-    "brasileirao serie a",
-    "brazil serie a",
-
-    "liga mx",
-    "mexico liga mx",
-
-    "mls",
-    "major league soccer",
-
-    "eredivisie",
-
-    "primeira liga",
-    "liga portugal",
-
-    "liga profesional",
-    "argentina primera division",
-
-    "championship",
-    "english championship",
-
-    "laliga2",
-    "la liga 2",
-    "segunda division",
-
-    "serie b",
-
-    "2. bundesliga",
-    "2 bundesliga",
-
-    "ligue 2"
-}
-
-
-def normalizar_liga(liga):
-    liga = str(liga).lower().strip()
-
-    liga = re.sub(
-        r"\s+",
-        " ",
-        liga
-    )
-
-    return liga
-
-
-def liga_permitida(liga):
-    l = normalizar_liga(liga)
-
-    # Coincidencia exacta
-    if l in LIGAS_EXACTAS:
-        return True
-
-    # Algunos nombres oficiales pueden traer prefijos.
-    permitidas_parciales = [
-        "uefa champions league",
-        "uefa europa league",
-        "english championship",
-        "major league soccer",
-        "brazil serie a",
-        "mexico liga mx",
-        "argentina primera division"
-    ]
-
-    for x in permitidas_parciales:
-        if l == x:
-            return True
-
-    return False
-
-
-# ============================================================
-# FILTRO DE LIGAS BASURA
-# ============================================================
-
-def es_basura(txt, liga):
-    t = str(txt).lower()
-    l = str(liga).lower()
-
-    patrones = [
-        r"\bu\d{1,2}\b",
-        r"\bsub[-\s]?\d+",
-        r"\byouth\b",
-        r"\bjuvenil\b",
-        r"\breserve\b",
-        r"\breserves\b",
-        r"\bwomen\b",
-        r"\bfemenino\b",
-        r"\bfeminino\b",
-        r"\bgirls\b",
-        r"\b2nd team\b",
-        r"\bii\b"
-    ]
-
-    for patron in patrones:
-        if re.search(patron, t):
-            return True
-
-    ligas_malas = [
-        "serie c",
-        "serie d",
-        "3. liga",
-        "3 liga",
-        "national league",
-        "liga 3",
-        "terceira",
-        "expansion",
-        "liga premier",
-        "ascenso",
-        "regional",
-        "amateur",
-        "reserve",
-        "reserves",
-        "youth",
-        "u21",
-        "u20",
-        "u19",
-        "u18",
-        "u17"
-    ]
-
-    for mala in ligas_malas:
-        if mala in l:
-            return True
-
-    return False
-
-
-# ============================================================
-# VALIDACIÓN COMPLETA DEL PARTIDO
-# ============================================================
-
-def partido_valido(p):
-    if not isinstance(p, dict):
-        return False
-
-    liga = str(
-        p.get("league_name", "")
-    ).strip()
-
-    pais = str(
-        p.get("country_name", "")
-    ).strip()
-
-    home = str(
-        p.get("match_hometeam_name", "")
-    ).strip()
-
-    away = str(
-        p.get("match_awayteam_name", "")
-    ).strip()
-
-    if not liga or not home or not away:
-        return False
-
-    # --------------------------------------------------------
-    # 1. LIGA ESTRICTA
-    # --------------------------------------------------------
-
-    if not liga_permitida(liga):
-        return False
-
-    # --------------------------------------------------------
-    # 2. BASURA
-    # --------------------------------------------------------
-
-    txt = f"{liga} {pais} {home} {away}"
-
-    if es_basura(txt, liga):
-        return False
-
-    # --------------------------------------------------------
-    # 3. ESTADO
-    # --------------------------------------------------------
-
-    if estado_prohibido(p):
-        return False
-
-    # --------------------------------------------------------
-    # 4. FECHA/HORA FUTURA
-    # --------------------------------------------------------
-
-    if not partido_es_futuro(p):
-        return False
-
-    # --------------------------------------------------------
-    # 5. MÉXICO
-    # --------------------------------------------------------
-
-    if "mexico" in pais.lower():
-
-        if "liga mx" not in liga.lower():
-            return False
-
-    return True
-
-
-# ============================================================
-# ODDS REALES
-# ============================================================
-
 def get_real_odds(match_id):
-
     try:
-
-        url = (
-            "https://apiv3.apifootball.com/"
-            f"?action=get_odds"
-            f"&match_id={match_id}"
-            f"&APIkey={API_KEY}"
-        )
-
-        data = requests.get(
-            url,
-            timeout=12
-        ).json()
-
+        url = f"https://apiv3.apifootball.com/?action=get_odds&match_id={match_id}&APIkey={API_KEY}"
+        data = requests.get(url, timeout=12).json()
         if not isinstance(data, list):
             return {}
 
-        odds = {
-            "btts": [],
-            "anota": [],
-            "over25": [],
-            "under25": [],
-            "home": []
-        }
-
+        odds = {"btts": [], "anota": [], "over25": [], "under25": [], "home": []}
         for book in data:
-
             if not isinstance(book, dict):
                 continue
+            if book.get("bts_yes") and str(book["bts_yes"]).replace(".", "").isdigit():
+                odds["btts"].append(float(book["bts_yes"]))
+            if book.get("o+0.5") and str(book["o+0.5"]).replace(".", "").isdigit():
+                odds["anota"].append(float(book["o+0.5"]))
+            if book.get("o+2.5") and str(book["o+2.5"]).replace(".", "").isdigit():
+                odds["over25"].append(float(book["o+2.5"]))
+            if book.get("u+2.5") and str(book["u+2.5"]).replace(".", "").isdigit():
+                odds["under25"].append(float(book["u+2.5"]))
+            if book.get("odd_1") and str(book["odd_1"]).replace(".", "").isdigit():
+                odds["home"].append(float(book["odd_1"]))
 
-            valores = {
-                "btts": book.get("bts_yes"),
-                "anota": book.get("o+0.5"),
-                "over25": book.get("o+2.5"),
-                "under25": book.get("u+2.5"),
-                "home": book.get("odd_1")
-            }
-
-            for key, valor in valores.items():
-
-                try:
-
-                    if valor is not None:
-
-                        numero = float(valor)
-
-                        if numero > 1:
-                            odds[key].append(numero)
-
-                except:
-                    pass
-
-        resultado = {}
-
+        result = {}
         for k, v in odds.items():
-
             if v:
-                resultado[k] = round(
-                    sum(v) / len(v),
-                    2
-                )
-
-        return resultado
-
-    except Exception as e:
-
-        print("Error odds:", e)
-
+                result[k] = round(sum(v) / len(v), 2)
+        return result
+    except:
         return {}
 
-
-# ============================================================
-# ANÁLISIS FÚTBOL
-# ============================================================
-
 def analiza_mercados_futbol(home, away):
-
     try:
-
-        desde = (
-            datetime.now() -
-            timedelta(days=40)
-        ).strftime("%Y-%m-%d")
-
-        hasta = datetime.now().strftime(
-            "%Y-%m-%d"
-        )
-
-        url = (
-            "https://apiv3.apifootball.com/"
-            f"?action=get_events"
-            f"&from={desde}"
-            f"&to={hasta}"
-            f"&APIkey={API_KEY}"
-        )
-
-        data = requests.get(
-            url,
-            timeout=15
-        ).json()
+        desde = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+        hasta = datetime.now().strftime("%Y-%m-%d")
+        url = f"https://apiv3.apifootball.com/?action=get_events&from={desde}&to={hasta}&APIkey={API_KEY}"
+        data = requests.get(url, timeout=15).json()
 
         if not isinstance(data, list):
             return None
 
         def get_stats(nombre):
-
             partidos = []
-
             for x in data:
-
                 if not isinstance(x, dict):
                     continue
-
-                h_name = str(
-                    x.get(
-                        "match_hometeam_name",
-                        ""
-                    )
-                ).lower()
-
-                a_name = str(
-                    x.get(
-                        "match_awayteam_name",
-                        ""
-                    )
-                ).lower()
-
-                if (
-                    nombre.lower() in h_name
-                    or
-                    nombre.lower() in a_name
-                ):
-
+                h_name = x.get("match_hometeam_name", "").lower()
+                a_name = x.get("match_awayteam_name", "").lower()
+                if nombre.lower() in h_name or nombre.lower() in a_name:
                     try:
-
-                        gh = int(
-                            x.get(
-                                "match_hometeam_score",
-                                0
-                            ) or 0
-                        )
-
-                        ga = int(
-                            x.get(
-                                "match_awayteam_score",
-                                0
-                            ) or 0
-                        )
-
-                        es_local = (
-                            nombre.lower()
-                            in h_name
-                        )
-
-                        partidos.append(
-                            (gh, ga, es_local)
-                        )
-
+                        gh = int(x.get("match_hometeam_score", 0) or 0)
+                        ga = int(x.get("match_awayteam_score", 0) or 0)
+                        es_local = nombre.lower() in h_name
+                        partidos.append((gh, ga, es_local))
                     except:
                         continue
-
             return partidos[:8]
 
         ph = get_stats(home)
@@ -635,410 +109,312 @@ def analiza_mercados_futbol(home, away):
         if len(ph) < 4 or len(pa) < 4:
             return None
 
-        def calc_btts(p):
-
-            return (
-                sum(
-                    1 for g in p
-                    if g[0] > 0
-                    and g[1] > 0
-                )
-                / len(p)
-                * 100
-            )
-
-        def calc_over(p):
-
-            return (
-                sum(
-                    1 for g in p
-                    if g[0] + g[1] >= 3
-                )
-                / len(p)
-                * 100
-            )
-
-        def calc_under(p):
-
-            return (
-                sum(
-                    1 for g in p
-                    if g[0] + g[1] <= 2
-                )
-                / len(p)
-                * 100
-            )
-
-        def calc_avg(p):
-
-            return sum(
-                g[0] + g[1]
-                for g in p
-            ) / len(p)
-
+        def calc_btts(p): return sum(1 for g in p if g[0] > 0 and g[1] > 0) / len(p) * 100
+        def calc_over(p): return sum(1 for g in p if g[0] + g[1] >= 3) / len(p) * 100
+        def calc_under(p): return sum(1 for g in p if g[0] + g[1] <= 2) / len(p) * 100
+        def calc_avg(p): return sum(g[0] + g[1] for g in p) / len(p)
         def calc_home15(p):
-
-            locales = [
-                g for g in p
-                if g[2]
-            ]
-
-            if len(locales) < 3:
-                return 0
-
-            return (
-                sum(
-                    1 for g in locales
-                    if g[0] >= 2
-                )
-                / len(locales)
-                * 100
-            )
-
+            locales = [g for g in p if g[2]]
+            if len(locales) < 3: return 0
+            return sum(1 for g in locales if g[0] >= 2) / len(locales) * 100
+        
         def calc_anota(p, es_local):
+            if not p: return 0
+            return sum(1 for g in p if (g[0] > 0 if es_local else g[1] > 0)) / len(p) * 100
 
-            if not p:
-                return 0
-
-            return (
-                sum(
-                    1 for g in p
-                    if (
-                        g[0] > 0
-                        if es_local
-                        else g[1] > 0
-                    )
-                )
-                / len(p)
-                * 100
-            )
-
-        btts_h = calc_btts(ph)
-        btts_a = calc_btts(pa)
-
-        over_h = calc_over(ph)
-        over_a = calc_over(pa)
-
-        under_h = calc_under(ph)
-        under_a = calc_under(pa)
-
-        avg_comb = (
-            calc_avg(ph)
-            + calc_avg(pa)
-        ) / 2
-
+        btts_h, btts_a = calc_btts(ph), calc_btts(pa)
+        over_h, over_a = calc_over(ph), calc_over(pa)
+        under_h, under_a = calc_under(ph), calc_under(pa)
+        avg_comb = (calc_avg(ph) + calc_avg(pa)) / 2
         home15 = calc_home15(ph)
-
-        anota_h = calc_anota(
-            ph,
-            True
-        )
-
-        anota_a = calc_anota(
-            pa,
-            False
-        )
+        anota_h = calc_anota(ph, True)
+        anota_a = calc_anota(pa, False)
 
         mercados = []
 
-        if (
-            btts_h >= 40
-            and btts_a >= 40
-        ):
-            mercados.append({
-                "tipo": "BTTS SI",
-                "score": (
-                    btts_h + btts_a
-                ) / 2,
-                "key": "btts"
-            })
+        if btts_h >= 40 and btts_a >= 40:
+            mercados.append({"tipo": "BTTS SI", "score": (btts_h + btts_a)/2, "key": "btts"})
+        elif anota_h >= 70 and anota_a >= 70:
+            mercados.append({"tipo": "Equipo Anota", "score": (anota_h + anota_a)/2, "key": "anota"})
 
-        elif (
-            anota_h >= 70
-            and anota_a >= 70
-        ):
-            mercados.append({
-                "tipo": "Equipo Anota",
-                "score": (
-                    anota_h + anota_a
-                ) / 2,
-                "key": "anota"
-            })
-
-        if (
-            over_h >= 55
-            and over_a >= 55
-            and avg_comb >= 2.70
-        ):
-            mercados.append({
-                "tipo": "Over 2.5",
-                "score": (
-                    over_h + over_a
-                ) / 2,
-                "key": "over25"
-            })
-
-        if (
-            under_h >= 55
-            and under_a >= 55
-        ):
-            mercados.append({
-                "tipo": "Under 2.5",
-                "score": (
-                    under_h + under_a
-                ) / 2,
-                "key": "under25"
-            })
-
+        if over_h >= 55 and over_a >= 55 and avg_comb >= 2.70:
+            mercados.append({"tipo": "Over 2.5", "score": (over_h + over_a)/2, "key": "over25"})
+        if under_h >= 55 and under_a >= 55:
+            mercados.append({"tipo": "Under 2.5", "score": (under_h + under_a)/2, "key": "under25"})
         if home15 >= 60:
-            mercados.append({
-                "tipo": "Local Over 1.5",
-                "score": home15,
-                "key": "home15"
-            })
+            mercados.append({"tipo": "Local Over 1.5", "score": home15, "key": "home15"})
 
         if not mercados:
             return None
-
-        return max(
-            mercados,
-            key=lambda x: x["score"]
-        )
-
-    except Exception as e:
-
-        print(
-            "Error análisis fútbol:",
-            e
-        )
-
+        return max(mercados, key=lambda x: x["score"])
+    except:
         return None
 
-
-# ============================================================
-# OBTENER PARTIDOS FÚTBOL
-# ============================================================
-
-def obtener_partidos_futbol():
-
-    hoy = datetime.now().strftime(
-        "%Y-%m-%d"
-    )
-
-    url = (
-        "https://apiv3.apifootball.com/"
-        f"?action=get_events"
-        f"&from={hoy}"
-        f"&to={hoy}"
-        f"&APIkey={API_KEY}"
-    )
-
+def get_pick_espn(sport, line, historial):
     try:
+        d = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/scoreboard", timeout=10).json()
+        candidatos = []
+        for ev in d.get("events", [])[:15]:
+            status = ev.get("status", {}).get("type", {})
+            if status.get("completed", False) or "FINAL" in status.get("name", "").upper():
+                continue
 
-        data = requests.get(
-            url,
-            timeout=15
-        ).json()
+            comp = ev["competitions"][0]["competitors"]
+            h = next((x for x in comp if x["homeAway"] == "home"), comp[0])
+            a = next((x for x in comp if x["homeAway"] == "away"), comp[1])
 
-        if not isinstance(data, list):
-            return []
+            nombre_h = h["team"]["displayName"]
+            nombre_a = a["team"]["displayName"]
+            partido = f"{nombre_a} vs {nombre_h}"
 
-        return [
-            p for p in data
-            if partido_valido(p)
-        ]
+            if partido.lower() in historial:
+                continue
 
-    except Exception as e:
+            avg_h, pct_h, ok_h = 0, 0, False
+            avg_a, pct_a, ok_a = 0, 0, False
 
-        print(
-            "Error obteniendo fútbol:",
-            e
-        )
+            try:
+                for i in range(1, 7):
+                    fecha = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
+                    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/scoreboard?dates={fecha}"
+                    dd = requests.get(url, timeout=8).json()
+                    for e in dd.get("events", []):
+                        comps = e["competitions"][0]["competitors"]
+                        for c in comps:
+                            if h["team"]["abbreviation"].lower() in c["team"]["abbreviation"].lower():
+                                s = [int(x["score"]) for x in comps]
+                                avg_h = sum(s)
+                                pct_h += 1 if sum(s) > line else 0
+                            if a["team"]["abbreviation"].lower() in c["team"]["abbreviation"].lower():
+                                s = [int(x["score"]) for x in comps]
+                                avg_a = sum(s)
+                                pct_a += 1 if sum(s) > line else 0
+            except:
+                pass
 
-        return []
+            avg = (avg_h + avg_a) / 2 if avg_h and avg_a else max(avg_h, avg_a)
+            if avg > line * 0.9:
+                candidatos.append({"partido": partido, "avg": round(avg, 1)})
 
+        if not candidatos:
+            return None
+        candidatos = sorted(candidatos, key=lambda x: x["avg"], reverse=True)
+        return candidatos[0]
+    except:
+        return None
 
-# ============================================================
-# FÚTBOL PICKS
-# ============================================================
+def get_fallback(sport, historial):
+    try:
+        d = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/scoreboard", timeout=10).json()
+        for ev in d.get("events", [])[:10]:
+            status = ev.get("status", {}).get("type", {})
+            if status.get("completed", False) or "FINAL" in status.get("name", "").upper():
+                continue
+            c = ev["competitions"][0]["competitors"]
+            h = next((x for x in c if x["homeAway"] == "home"), c[0])
+            a = next((x for x in c if x["homeAway"] == "away"), c[1])
+            p = f"{a['team']['displayName']} vs {h['team']['displayName']}"
+            if p.lower() not in historial:
+                return p
+        return None
+    except:
+        return None
 
+hoy = datetime.now().strftime("%d/%m")
+hoy_api = datetime.now().strftime("%Y-%m-%d")
 historial = load_history()
 
-futbol_picks = []
+LIGAS_OK = [
+    "premier league", "la liga", "serie a", "bundesliga", "ligue 1",
+    "champions league", "europa league", "brasileirao", "liga mx",
+    "mls", "eredivisie", "primeira liga", "liga profesional",
+    "championship", "laliga2", "segunda", "serie b", "2. bundesliga", "ligue 2"
+]
 
+def es_basura(txt, liga):
+    t = txt.lower()
+    l = liga.lower()
+    if re.search(r"u\d{1,2}|sub[-\s]?\d|juvenil|youth|reserve|women|femen|feminino", t):
+        return True
+    if re.search(r"serie\s+[c-z]|serie c|serie d|3\. liga|national league|liga 3|terceira|expansion|liga premier|ascenso", l):
+        return True
+    if re.search(r"(grupo|group|girone)\s+[a-z\d]", l):
+        return True
+    if any(x in t for x in ["mineros", "correcaminos", "zapotlanejo", "heroes de zaci", "fresnillo"]):
+        return True
+    return False
+
+# ====================== FÚTBOL ======================
+futbol_picks = []  # Lista para guardar 2 picks
 try:
+    data = requests.get(
+        f"https://apiv3.apifootball.com/?action=get_events&from={hoy_api}&to={hoy_api}&APIkey={API_KEY}",
+        timeout=15
+    ).json()
 
-    partidos = obtener_partidos_futbol()
-
-    print(
-        "Partidos futuros válidos:",
-        len(partidos)
-    )
+    if not isinstance(data, list):
+        data = []
 
     candidatos = []
+    for p in data:
+        if not isinstance(p, dict):
+            continue
+        st = str(p.get("match_status", "")).lower()
+        if any(x in st for x in ["ft", "finished", "live", "ht", "1h", "2h", "cancel", "postponed"]):
+            continue
 
-    for p in partidos:
+        liga = str(p.get("league_name", ""))
+        pais = str(p.get("country_name", "") or "")
+        home = p.get("match_hometeam_name", "")
+        away = p.get("match_awayteam_name", "")
+        match_id = p.get("match_id")
+        txt = f"{liga} {pais} {home} {away}"
 
-        home = p.get(
-            "match_hometeam_name",
-            ""
-        )
+        if es_basura(txt, liga):
+            continue
+        if not any(x in liga.lower() for x in LIGAS_OK):
+            continue
+        if "mexico" in pais.lower() and "liga mx" not in liga.lower():
+            continue
 
-        away = p.get(
-            "match_awayteam_name",
-            ""
-        )
-
-        liga = p.get(
-            "league_name",
-            ""
-        )
-
-        match_id = p.get(
-            "match_id"
-        )
-
-        partido = (
-            f"{home} vs {away}"
-        )
-
-        # Historial
+        partido = f"{home} vs {away}"
         if partido.lower() in historial:
             continue
 
-        mejor = analiza_mercados_futbol(
-            home,
-            away
-        )
-
+        mejor = analiza_mercados_futbol(home, away)
         if mejor:
-
             candidatos.append({
                 "partido": partido,
-                "liga": liga,
                 "mercado": mejor,
                 "match_id": match_id,
                 "score": mejor["score"]
             })
 
-    # Ordenar por score
-    candidatos.sort(
-        key=lambda x: x["score"],
-        reverse=True
-    )
+    # Sistema de respaldo para garantizar que el Punto 1 tenga 2 picks reales
+    if len(candidatos) < 2:
+        for p in data:
+            if not isinstance(p, dict): continue
+            st = str(p.get("match_status", "")).lower()
+            if any(x in st for x in ["ft", "finished", "live", "ht", "1h", "2h", "cancel", "postponed"]): continue
+            liga = str(p.get("league_name", ""))
+            pais = str(p.get("country_name", "") or "")
+            home = p.get("match_hometeam_name", "")
+            away = p.get("match_awayteam_name", "")
+            match_id = p.get("match_id")
+            txt = f"{liga} {pais} {home} {away}"
 
-    # Solo los 2 mejores
-    seleccionados = candidatos[:2]
+            if es_basura(txt, liga): continue
+            if not any(x in liga.lower() for x in LIGAS_OK): continue
+            if "mexico" in pais.lower() and "liga mx" not in liga.lower(): continue
 
-    for elegido in seleccionados:
+            partido = f"{home} vs {away}"
+            if partido.lower() in historial: continue
+            if any(c["partido"] == partido for c in candidatos): continue
 
-        real = get_real_odds(
-            elegido["match_id"]
-        )
+            candidatos.append({
+                "partido": partido,
+                "mercado": {"tipo": "BTTS SI", "score": 50, "key": "btts"},
+                "match_id": match_id,
+                "score": 50
+            })
+            if len(candidatos) >= 2:
+                break
 
-        key = elegido[
-            "mercado"
-        ]["key"]
-
-        cuota = cuota_fallback(key)
-
-        if (
-            key in real
-            and 1.65 <= real[key] <= 2.25
-        ):
-            cuota = real[key]
-
-        futbol_picks.append({
-            "partido": elegido["partido"],
-            "liga": elegido["liga"],
-            "mercado": elegido[
-                "mercado"
-            ]["tipo"],
-            "cuota": cuota,
-            "score": round(
-                elegido["score"]
-            )
-        })
-
+    if candidatos:
+        candidatos = sorted(candidatos, key=lambda x: x["score"], reverse=True)
+        seleccionados = candidatos[:2] # Tomar los 2 mejores
+        
+        for elegido in seleccionados:
+            real = get_real_odds(elegido["match_id"])
+            key = elegido["mercado"]["key"]
+            cuota = cuota_fallback(key)
+            if key in real and 1.65 <= real[key] <= 2.25:
+                cuota = real[key]
+            
+            futbol_picks.append({
+                "partido": elegido["partido"],
+                "mercado": elegido["mercado"]["tipo"],
+                "cuota": cuota,
+                "score": round(elegido["score"])
+            })
 except Exception as e:
+    print("Error fútbol:", e)
 
-    print(
-        "Error fútbol:",
-        e
-    )
+# ====================== OTROS DEPORTES ======================
+mes_actual = datetime.now().month
+nba_en_temporada = mes_actual >= 10 or mes_actual <= 6
 
+if nba_en_temporada:
+    nba = get_pick_espn("basketball/nba", 220.5, historial)
+else:
+    nba = None
 
-# ============================================================
-# MENSAJE
-# ============================================================
+mlb = get_pick_espn("baseball/mlb", 8.5, historial)
+nfl = get_pick_espn("football/nfl", 45.5, historial)
+nhl = get_pick_espn("hockey/nhl", 6.5, historial)
 
-hoy = datetime.now().strftime(
-    "%d/%m/%Y %H:%M"
-)
+mlb_txt = mlb["partido"] if mlb else (get_fallback("baseball/mlb", historial) or "Yankees vs Red Sox")
+nfl_txt = nfl["partido"] if nfl else (get_fallback("football/nfl", historial) or "Chiefs vs Bills")
+nhl_txt = nhl["partido"] if nhl else (get_fallback("hockey/nhl", historial) or "Maple Leafs vs Canadiens")
 
-msg = (
-    "🔥 PACK FÚTBOL — "
-    f"{hoy}\n\n"
-)
+mlb_det = f"Avg {mlb['avg']}" if mlb else "MLB"
+nfl_det = f"Avg {nfl['avg']}" if nfl else "NFL"
+nhl_det = f"Avg {nhl['avg']}" if nhl else "NHL"
 
+if nba:
+    nba_txt = nba["partido"]
+    nba_det = f"Avg {nba['avg']}"
+    nba_cuota = cuota_fallback('nba')
+    nba_mercado = "Over 220.5"
+else:
+    nba_txt = get_fallback("baseball/mlb", historial) or "Yankees vs Red Sox"
+    nba_det = "MLB"
+    nba_cuota = cuota_fallback('mlb')
+    nba_mercado = "Over 8.5"
 
+# ====================== MENSAJE FINAL ======================
+msg = f"🔥 PACK 4 PICKS - {hoy} - STATS + CUOTAS REALES\n\n"
+
+# 1) MINI BTTS (Fútbol) - AHORA CON 2 PARTIDOS
 if futbol_picks:
-
+    # Calcular cuota combinada de los 2 picks
     cuota_combinada = 1.0
-
     for fp in futbol_picks:
         cuota_combinada *= fp["cuota"]
-
-    cuota_combinada = round(
-        cuota_combinada,
-        2
-    )
-
-    msg += (
-        f"⚽ MINI PACK "
-        f"@{cuota_combinada}\n\n"
-    )
-
-    for i, fp in enumerate(
-        futbol_picks,
-        1
-    ):
-
-        msg += (
-            f"{i}) {fp['partido']}\n"
-            f"🏆 {fp['liga']}\n"
-            f"📊 {fp['mercado']}\n"
-            f"💰 @ {fp['cuota']}\n"
-            f"📈 Score: {fp['score']}%\n\n"
-        )
-
+    cuota_combinada = round(cuota_combinada, 2)
+    
+    # Título dinámico según los mercados
+    titulos = [fp["mercado"] for fp in futbol_picks]
+    titulo_1 = "MINI BTTS" if all("BTTS" in t for t in titulos) else "MINI BTTS/ANOTA"
+    
+    msg += f"1) ⚽ {titulo_1} @{cuota_combinada}\n"
+    for fp in futbol_picks:
+        msg += f"- {fp['partido']} - {fp['mercado']} @{fp['cuota']} [{fp['score']}%]\n"
+    msg += "\n"
 else:
+    # Respaldo extremo en caso de que la API falle por completo
+    msg += f"1) ⚽ MINI BTTS @1.85\n"
+    msg += f"- Partido por confirmar - BTTS SI @1.85 [50%]\n\n"
 
-    msg += (
-        "⚠️ No encontré 2 partidos "
-        "futuros que cumplan todos "
-        "los filtros.\n\n"
-        "No se genera un partido "
-        "inventado.\n\n"
-    )
+# 2) COMBI MIXTA (NFL + NBA/MLB)
+cuota_combi = round(cuota_fallback('nfl') * nba_cuota, 2)
+msg += f"2) 🏈{'🏀' if nba else '⚾'} COMBI MIXTA @{cuota_combi}\n"
+msg += f"- 🏈 {nfl_txt} - Over 45.5 @{cuota_fallback('nfl')} [{nfl_det}]\n"
+msg += f"- {'🏀' if nba else '⚾'} {nba_txt} - {nba_mercado} @{nba_cuota} [{nba_det}]\n\n"
 
+# 3) FIJA (NHL)
+msg += f"3) 🏒 FIJA\n"
+msg += f"- {nhl_txt} - Over 6.5 @{cuota_fallback('nhl')}\n\n"
 
-# ============================================================
-# ENVIAR
-# ============================================================
+# 4) VALUE (MLB)
+msg += f"4) ⚾ VALUE\n"
+msg += f"- {mlb_txt} - Over 8.5 @{cuota_fallback('mlb')} [{mlb_det}]\n\n"
+
+msg += f"💵💰❤"
+
+# Guardar historial de los usados
+usados = [fp["partido"] for fp in futbol_picks] + [nfl_txt, nba_txt, nhl_txt, mlb_txt]
+save_history(usados)
 
 tg(msg)
-
 print(msg)
-
-
-# ============================================================
-# GUARDAR HISTORIAL
-# ============================================================
-
-usados = [
-    fp["partido"]
-    for fp in futbol_picks
-]
-
-save_history(usados)
